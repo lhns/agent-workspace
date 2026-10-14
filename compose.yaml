@@ -1,0 +1,67 @@
+name: agent-workspace
+
+# Mounts every harness shares; compose can't merge lists, so each service repeats these.
+x-workspace: &workspace ${WORKSPACE_DIR:-./workspace}:/workspace
+# Directory mount: git rewrites config via lockfile + rename, which a single-file mount breaks.
+x-git: &git ./shared/git:/home/agent/.config/git
+
+x-harness: &harness
+  stdin_open: true
+  tty: true
+  env_file: .env
+
+services:
+  # Harness images build FROM this one, so the run scripts build it first. Never started.
+  base:
+    build: ./agents/base
+    image: agent-workspace-base
+
+  claude:
+    <<: *harness
+    build: ./agents/claude
+    volumes:
+      - *workspace
+      - *git
+      - ./agents/claude/config:/home/agent/.claude
+      - ./shared/AGENTS.md:/home/agent/.claude/CLAUDE.md
+
+  opencode:
+    <<: *harness
+    build: ./agents/opencode
+    volumes:
+      - *workspace
+      - *git
+      - ./agents/opencode/config:/home/agent/.config/opencode
+      - ./agents/opencode/data:/home/agent/.local/share/opencode
+      - ./shared/AGENTS.md:/home/agent/.config/opencode/AGENTS.md
+
+  pi:
+    <<: *harness
+    build: ./agents/pi
+    volumes:
+      - *workspace
+      - *git
+      - ./agents/pi/config:/home/agent/.pi/agent
+      - ./shared/AGENTS.md:/home/agent/.pi/agent/AGENTS.md
+
+  cline:
+    <<: *harness
+    build: ./agents/cline
+    volumes:
+      - *workspace
+      - *git
+      - ./agents/cline/config:/home/agent/.cline
+      - ./shared/AGENTS.md:/home/agent/.agents/AGENTS.md
+
+  hermes:
+    <<: *harness
+    build: ./agents/hermes
+    volumes:
+      - *workspace
+      - *git
+      # Named volume, not a bind mount: hermes keeps its venv (symlinks) in ~/.hermes, and
+      # Windows bind mounts refuse symlinks. Docker seeds it from the image on first use.
+      - hermes-home:/home/agent/.hermes
+
+volumes:
+  hermes-home:

@@ -1,0 +1,8 @@
+# Local state; scripts and containers write only here.
+.env
+compose.override.yaml
+/shared/
+/agents/*/config/
+/agents/*/data/
+/workspace/*
+!/workspace/.gitkeep
