@@ -1,0 +1,34 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "dependencyDashboard": true,
+  "pinDigests": true,
+  "customManagers": [
+    {
+      "description": "ARG <NAME>_VERSION pinned in agents/*/Dockerfile, annotated with '# renovate: datasource=... depName=...'; an optional ARG <NAME>_COMMIT on the next line holds the digest.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^agents/.+/Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+ARG \\w+_VERSION=(?<currentValue>\\S+)(?:\\s+ARG \\w+_COMMIT=(?<currentDigest>[a-f0-9]{40}))?"
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "The base image is built locally by the launchers, not pulled.",
+      "matchPackageNames": ["agent-workspace-base"],
+      "enabled": false
+    },
+    {
+      "description": "Stay on the node 24 LTS line; only its digest moves.",
+      "matchPackageNames": ["node"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "hermes also has old date-style tags (v2026.9.24) and canary tags; only vX.Y.Z releases count.",
+      "matchPackageNames": ["NousResearch/hermes-agent"],
+      "allowedVersions": "/^v[0-9]{1,3}\\.[0-9]+\\.[0-9]+$/"
+    }
+  ]
+}

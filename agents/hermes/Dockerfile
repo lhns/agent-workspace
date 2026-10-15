@@ -8,6 +8,11 @@ USER agent
 # stays in ~/.hermes, which compose backs with a named volume seeded from this image.
 ENV HERMES_INSTALL_DIR=/home/agent/.local/share/hermes/code \
     HERMES_RUNTIME_DIR=/home/agent/.local/share/hermes/runtime
-RUN curl -fsSL https://hermes-agent.nousresearch.com/install.sh \
-    | bash -s -- --non-interactive --skip-browser --skip-computer-use
+# Releases are commits on release/<version> branches, not on main; the installer wants both.
+# renovate: datasource=github-tags depName=NousResearch/hermes-agent
+ARG HERMES_VERSION=v0.22.2
+ARG HERMES_COMMIT=d923a5eb487a17c0a68801bba9ef0f56c81040a8
+RUN curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_COMMIT}/scripts/install.sh \
+    | bash -s -- --non-interactive --skip-browser --skip-computer-use \
+        --branch release/${HERMES_VERSION#v} --commit ${HERMES_COMMIT}
 CMD ["hermes"]
