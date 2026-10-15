@@ -1,6 +1,6 @@
 # 14. Rebuild only when a Dockerfile hash changes
 
-Status: Accepted. Supersedes [ADR 11](0011-rebuild-via-build-cache.md).
+Status: Accepted. Supersedes [ADR 11](0011-rebuild-via-build-cache.md). The last consequence is superseded by [ADR 17](0017-pinned-versions-renovate-ci.md).
 
 ## Context
 ADR 11 let Docker's build cache decide on every launch (`build base` + `run --build`). In practice that is slow on each start and doesn't reliably skip work. The original per-repo launchers skipped the build entirely unless the Dockerfile had changed, which made starting near-instant.

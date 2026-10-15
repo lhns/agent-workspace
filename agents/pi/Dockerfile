@@ -1,4 +1,6 @@
 FROM agent-workspace-base
-RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+# renovate: datasource=npm depName=@earendil-works/pi-coding-agent
+ARG PI_VERSION=1.2.0
+RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@${PI_VERSION}
 RUN mkdir -p ~/.pi/agent
 CMD ["pi"]

@@ -22,6 +22,7 @@ agents/<harness>/     Dockerfile (only the harness install, FROM base) + its loc
 agents/run.*          launch logic, one file per OS; agents/harness-dirs lists state dirs
 run-<harness>.*       one-line launchers
 compose.yaml          one service per harness
+tests/                CI smoke test (agent starts) and run.bat test
 shared/               local, gitignored: git config + credentials, AGENTS.md
 workspace/            default workspace
 docs/adr/             design decisions
@@ -59,7 +60,9 @@ Write `shared/AGENTS.md` once; it is mounted where each harness reads global ins
 
 ## Update
 
-`git pull`. Local files are all gitignored, so this never conflicts. Rebuilds never fetch new agent releases on their own; for those run `docker compose build --no-cache <harness>`.
+`git pull`. Local files are all gitignored, so this never conflicts. Agent versions (and the base image digest) are pinned in the Dockerfiles; [Renovate](renovate.json) opens a PR for each new release. Once merged, `git pull` changes the Dockerfile, so the next launch rebuilds that harness. `docker compose build --no-cache <harness>` is only needed to force a rebuild of the tools installed from apt.
+
+CI (`.github/workflows/ci.yml`) builds every image through the real launcher and checks that each agent starts; it also runs shellcheck/actionlint and tests `run.bat` against a stub docker. For Renovate to run, add a `RENOVATE_TOKEN` repository secret (a personal access token, so its PRs trigger CI).
 
 Hermes keeps its Python environment in its Docker volume, which is filled from the image only on first use. After rebuilding hermes, run `hermes pm repair` inside so the dependencies match the new code, or delete the volume to start fresh (`docker volume rm agent-workspace_hermes-home`, which also loses hermes state). On first run, if it asks for setup, run `hermes setup` inside.
 
