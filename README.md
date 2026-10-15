@@ -12,7 +12,7 @@ Harnesses: `claude` (Claude Code), `opencode`, `pi`, `cline`, `hermes`. Docker w
 
 Same for `opencode`, `pi`, `cline`, `hermes`. Extra arguments go to the agent, or start a shell with `run-claude.bat bash`.
 
-The first run creates `.env` from `.env.example` and stops until you edit it (uncomment the keys you use). Later runs rebuild only what changed (Docker's build cache).
+The first run creates `.env` from `.env.example` and stops until you edit it (uncomment the keys you use). Later runs rebuild only when a Dockerfile changed (a hash in `agents/<harness>/.build.sha256`; delete it to force a rebuild).
 
 ## Layout
 
@@ -59,7 +59,7 @@ Write `shared/AGENTS.md` once; it is mounted where each harness reads global ins
 
 ## Update
 
-`git pull`. Local files are all gitignored, so this never conflicts. The build cache never fetches new agent releases; for those run `docker compose build --no-cache <harness>`.
+`git pull`. Local files are all gitignored, so this never conflicts. Rebuilds never fetch new agent releases on their own; for those run `docker compose build --no-cache <harness>`.
 
 Hermes keeps its Python environment in its Docker volume, which is filled from the image only on first use. After rebuilding hermes, run `hermes pm repair` inside so the dependencies match the new code, or delete the volume to start fresh (`docker volume rm agent-workspace_hermes-home`, which also loses hermes state). On first run, if it asks for setup, run `hermes setup` inside.
 

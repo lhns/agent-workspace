@@ -39,5 +39,16 @@ if not exist shared\git\config (
     )
 )
 
-docker compose build base || exit /b 1
-docker compose run --rm --build %HARNESS% %*
+rem Rebuild only when a Dockerfile changed since the last build (much faster than asking
+rem docker); docker's layer cache still keeps that rebuild short.
+set "HASHFILE=agents\%HARNESS%\.build.sha256"
+for /f "usebackq delims=" %%H in (`powershell -NoProfile -Command "(Get-FileHash agents\base\Dockerfile).Hash + (Get-FileHash agents\%HARNESS%\Dockerfile).Hash"`) do set "NEW_HASH=%%H"
+set "OLD_HASH="
+if exist "%HASHFILE%" set /p OLD_HASH=<"%HASHFILE%"
+if not "%NEW_HASH%"=="%OLD_HASH%" (
+    docker compose build base || exit /b 1
+    docker compose build %HARNESS% || exit /b 1
+    >"%HASHFILE%" echo %NEW_HASH%
+)
+
+docker compose run --rm %HARNESS% %*

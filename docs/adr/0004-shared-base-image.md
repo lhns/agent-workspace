@@ -1,6 +1,6 @@
 # 4. Shared base image with identical tools
 
-Status: Accepted
+Status: Accepted. The "no Python" part is superseded by [ADR 15](0015-python-in-base.md).
 
 ## Context
 The old repos each had their own apt list and base image, which drifted apart: different base images, and Python in some but not others. An agent's ability to work on a project shouldn't depend on which harness runs it.

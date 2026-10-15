@@ -33,5 +33,14 @@ if [ ! -e shared/git/config ]; then
     done
 fi
 
-docker compose build base
-exec docker compose run --rm --build "$h" "$@"
+# Rebuild only when a Dockerfile changed since the last build (much faster than asking
+# docker); docker's layer cache still keeps that rebuild short.
+hashfile=agents/$h/.build.sha256
+new=$(cat agents/base/Dockerfile "agents/$h/Dockerfile" | sha256sum | cut -d' ' -f1)
+if [ "$new" != "$(cat "$hashfile" 2>/dev/null)" ]; then
+    docker compose build base
+    docker compose build "$h"
+    echo "$new" > "$hashfile"
+fi
+
+exec docker compose run --rm "$h" "$@"

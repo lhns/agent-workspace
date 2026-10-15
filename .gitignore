@@ -4,5 +4,6 @@ compose.override.yaml
 /shared/
 /agents/*/config/
 /agents/*/data/
+/agents/*/.build.sha256
 /workspace/*
 !/workspace/.gitkeep

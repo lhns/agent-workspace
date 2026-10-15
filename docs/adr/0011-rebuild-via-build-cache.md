@@ -1,6 +1,6 @@
 # 11. Rebuild only when needed, via Docker's build cache
 
-Status: Accepted
+Status: Superseded by [ADR 14](0014-rebuild-on-dockerfile-hash.md)
 
 ## Context
 Rebuilding on every launch is slow, and never rebuilding misses Dockerfile changes after a pull. The old launchers stored a hash of the Dockerfile, which needed custom code per OS and missed changes to other inputs such as the base image. Harness images build on a shared base (ADR 4). Compose's `additional_contexts: service:base` would link the two, but it needs buildx, which not every Docker install has.
