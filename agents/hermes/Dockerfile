@@ -12,7 +12,10 @@ ENV HERMES_INSTALL_DIR=/home/agent/.local/share/hermes/code \
 # renovate: datasource=github-tags depName=NousResearch/hermes-agent
 ARG HERMES_VERSION=v0.22.2
 ARG HERMES_COMMIT=d923a5eb487a17c0a68801bba9ef0f56c81040a8
-RUN curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_COMMIT}/scripts/install.sh \
-    | bash -s -- --non-interactive --skip-browser --skip-computer-use \
-        --branch release/${HERMES_VERSION#v} --commit ${HERMES_COMMIT}
+# Download first: piped into bash, a failed download (e.g. HTTP 429) would build an empty image.
+RUN curl -fsSL --retry 5 --retry-all-errors -o /tmp/install.sh \
+        https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_COMMIT}/scripts/install.sh \
+    && bash /tmp/install.sh --non-interactive --skip-browser --skip-computer-use \
+        --branch release/${HERMES_VERSION#v} --commit ${HERMES_COMMIT} \
+    && rm /tmp/install.sh
 CMD ["hermes"]

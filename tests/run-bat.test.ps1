@@ -60,3 +60,4 @@ finally {
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 }
 if ($failures) { Write-Host "$failures check(s) failed"; exit 1 }
+exit 0
