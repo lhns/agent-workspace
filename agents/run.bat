@@ -46,6 +46,7 @@ for /f "usebackq delims=" %%H in (`powershell -NoProfile -Command "(Get-FileHash
 set "OLD_HASH="
 if exist "%HASHFILE%" set /p OLD_HASH=<"%HASHFILE%"
 if not "%NEW_HASH%"=="%OLD_HASH%" (
+    echo Building %HARNESS% image...
     docker compose build base || exit /b 1
     docker compose build %HARNESS% || exit /b 1
     >"%HASHFILE%" echo %NEW_HASH%

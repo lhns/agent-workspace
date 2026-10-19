@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 # .env: created from the example, and refused until the user has edited it.
 [ -f .env ] || cp .env.example .env
 if cmp -s .env.example .env; then echo "Edit .env first" >&2; exit 1; fi
-for k in $(sed -n 's/^\([A-Z_]*\)=.*/\1/p' .env.example); do
+sed -n 's/^\([A-Z_]*\)=.*/\1/p' .env.example | while read -r k; do
     grep -q "^$k=" .env || echo "Warning: $k is missing in .env (see .env.example)" >&2
 done
 
@@ -38,9 +38,12 @@ fi
 hashfile=agents/$h/.build.sha256
 new=$(cat agents/base/Dockerfile "agents/$h/Dockerfile" | sha256sum | cut -d' ' -f1)
 if [ "$new" != "$(cat "$hashfile" 2>/dev/null)" ]; then
+    echo "Building $h image..."
     docker compose build base
     docker compose build "$h"
     echo "$new" > "$hashfile"
 fi
 
-exec docker compose run --rm "$h" "$@"
+# Without a terminal (CI, pipes) compose can't allocate a tty and fails; -T skips it.
+tty=; [ -t 0 ] || tty=-T
+exec docker compose run --rm ${tty:+"$tty"} "$h" "$@"
