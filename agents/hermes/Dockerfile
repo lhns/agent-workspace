@@ -5,7 +5,8 @@ USER root
 RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 rsync \
     && rm -rf /var/lib/apt/lists/*
 USER agent
-# Releases are commits on release/<version> branches, not on main; the installer wants both.
+# The installer clones a branch or tag (the release tag; release branches only exist for some
+# releases) and checks out the pinned commit.
 # renovate: datasource=github-tags depName=NousResearch/hermes-agent
 ARG HERMES_VERSION=v0.22.3
 ARG HERMES_COMMIT=5b147ab036d6d19131bff8d20701b5001eab844a
@@ -13,7 +14,7 @@ ARG HERMES_COMMIT=5b147ab036d6d19131bff8d20701b5001eab844a
 RUN curl -fsSL --retry 5 --retry-all-errors -o /tmp/install.sh \
         https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_COMMIT}/scripts/install.sh \
     && bash /tmp/install.sh --non-interactive --skip-browser --skip-computer-use \
-        --branch release/${HERMES_VERSION#v} --commit ${HERMES_COMMIT} \
+        --branch ${HERMES_VERSION} --commit ${HERMES_COMMIT} \
     && rm /tmp/install.sh
 # Without bytecode every new container compiles thousands of modules before the gateway is up.
 # Hermes deletes bytecode at its first launch of a checkout, so launch once, then compile.
