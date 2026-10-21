@@ -19,10 +19,10 @@ elif [ ! -d "$ws" ]; then
     echo "WORKSPACE_DIR '$ws' does not exist" >&2; exit 1
 fi
 
-# Prebuilt images come from ghcr.io unless LOCAL_BUILD is non-empty (shell env wins over .env).
-local_build=${LOCAL_BUILD-$(sed -n 's/^LOCAL_BUILD=//p' .env | tail -n1 | tr -d '\r"')}
+# Prebuilt images come from ghcr.io unless AGENTS_LOCAL_BUILD is non-empty (shell env wins over .env).
+local_build=${AGENTS_LOCAL_BUILD-$(sed -n 's/^AGENTS_LOCAL_BUILD=//p' .env | tail -n1 | tr -d '\r"')}
 # Prebuilt images are <prefix>-<harness>:<hash>; shell env wins over .env.
-prefix=${IMAGE_PREFIX:-$(sed -n 's/^IMAGE_PREFIX=//p' .env | tail -n1 | tr -d '\r"')}
+prefix=${AGENTS_IMAGE_PREFIX:-$(sed -n 's/^AGENTS_IMAGE_PREFIX=//p' .env | tail -n1 | tr -d '\r"')}
 prefix=${prefix:-ghcr.io/lhns/agent-workspace}
 
 # State dirs, so docker doesn't create them as root.

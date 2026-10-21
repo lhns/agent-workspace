@@ -12,11 +12,11 @@ for /f "delims==" %%K in ('findstr /r /b "[A-Z_]*=" .env.example') do (
 
 rem Workspace: shell env wins over .env, like compose's own interpolation.
 if not defined WORKSPACE_DIR for /f "usebackq tokens=1,* delims==" %%A in (".env") do if "%%A"=="WORKSPACE_DIR" if not "%%B"=="" set "WORKSPACE_DIR=%%~B"
-rem Prebuilt images come from ghcr.io unless LOCAL_BUILD is non-empty (shell env wins over .env).
-if not defined LOCAL_BUILD for /f "usebackq tokens=1,* delims==" %%A in (".env") do if "%%A"=="LOCAL_BUILD" if not "%%B"=="" set "LOCAL_BUILD=%%~B"
+rem Prebuilt images come from ghcr.io unless AGENTS_LOCAL_BUILD is non-empty (shell env wins over .env).
+if not defined AGENTS_LOCAL_BUILD for /f "usebackq tokens=1,* delims==" %%A in (".env") do if "%%A"=="AGENTS_LOCAL_BUILD" if not "%%B"=="" set "AGENTS_LOCAL_BUILD=%%~B"
 rem Prebuilt images are <prefix>-<harness>:<hash>; shell env wins over .env.
-if not defined IMAGE_PREFIX for /f "usebackq tokens=1,* delims==" %%A in (".env") do if "%%A"=="IMAGE_PREFIX" if not "%%B"=="" set "IMAGE_PREFIX=%%~B"
-if not defined IMAGE_PREFIX set "IMAGE_PREFIX=ghcr.io/lhns/agent-workspace"
+if not defined AGENTS_IMAGE_PREFIX for /f "usebackq tokens=1,* delims==" %%A in (".env") do if "%%A"=="AGENTS_IMAGE_PREFIX" if not "%%B"=="" set "AGENTS_IMAGE_PREFIX=%%~B"
+if not defined AGENTS_IMAGE_PREFIX set "AGENTS_IMAGE_PREFIX=ghcr.io/lhns/agent-workspace"
 if defined WORKSPACE_DIR (
     if not exist "!WORKSPACE_DIR!\" (echo WORKSPACE_DIR '!WORKSPACE_DIR!' does not exist & exit /b 1)
 ) else (
@@ -53,9 +53,9 @@ for /f "usebackq delims=" %%H in (`powershell -NoProfile -Command "$b = [IO.File
 set "OLD_HASH="
 if exist "%HASHFILE%" set /p OLD_HASH=<"%HASHFILE%"
 if not "%NEW_HASH%"=="%OLD_HASH%" (
-    set "REF=%IMAGE_PREFIX%-%HARNESS%:%NEW_HASH%"
+    set "REF=%AGENTS_IMAGE_PREFIX%-%HARNESS%:%NEW_HASH%"
     set "PULLED="
-    if not defined LOCAL_BUILD (
+    if not defined AGENTS_LOCAL_BUILD (
         echo Pulling %HARNESS% image...
         docker pull "!REF!"
         if errorlevel 1 (

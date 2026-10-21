@@ -18,7 +18,7 @@ public class P { public static void Main(string[] a) {
 '@
 Add-Type -OutputType ConsoleApplication -OutputAssembly "$work\stub\docker.exe" -TypeDefinition $stub
 $env:PATH = "$work\stub;$env:PATH"
-Remove-Item Env:WORKSPACE_DIR, Env:LOCAL_BUILD, Env:IMAGE_PREFIX, Env:STUB_PULL_FAIL -ErrorAction SilentlyContinue
+Remove-Item Env:WORKSPACE_DIR, Env:AGENTS_LOCAL_BUILD, Env:AGENTS_IMAGE_PREFIX, Env:STUB_PULL_FAIL -ErrorAction SilentlyContinue
 $failures = 0
 $hash = (Get-FileHash -Algorithm SHA256 -InputStream ([IO.MemoryStream]::new([byte[]]([IO.File]::ReadAllBytes("$work\agents\base\Dockerfile") + [IO.File]::ReadAllBytes("$work\agents\claude\Dockerfile"))))).Hash.ToLower()
 $ref = "ghcr.io/lhns/agent-workspace-claude:$hash"
@@ -60,23 +60,23 @@ try {
     Invoke-Launcher 'bash'
     Check 'build is skipped again afterwards' (($calls -join '|') -eq 'compose run --rm claude bash')
 
-    $env:LOCAL_BUILD = '1'
+    $env:AGENTS_LOCAL_BUILD = '1'
     Remove-Item "$work\agents\claude\.build.sha256"
     Invoke-Launcher 'bash'
-    Remove-Item Env:LOCAL_BUILD
-    Check 'LOCAL_BUILD in the shell builds without pulling' (($calls -join '|') -eq $built)
+    Remove-Item Env:AGENTS_LOCAL_BUILD
+    Check 'AGENTS_LOCAL_BUILD in the shell builds without pulling' (($calls -join '|') -eq $built)
 
-    Add-Content "$work\.env" 'LOCAL_BUILD=1'
+    Add-Content "$work\.env" 'AGENTS_LOCAL_BUILD=1'
     Remove-Item "$work\agents\claude\.build.sha256"
     Invoke-Launcher 'bash'
-    Check 'LOCAL_BUILD in .env builds without pulling' (($calls -join '|') -eq $built)
+    Check 'AGENTS_LOCAL_BUILD in .env builds without pulling' (($calls -join '|') -eq $built)
 
-    $env:IMAGE_PREFIX = 'registry.example/me/aw'
+    $env:AGENTS_IMAGE_PREFIX = 'registry.example/me/aw'
     Remove-Item "$work\agents\claude\.build.sha256"
-    (Get-Content "$work\.env") -notmatch '^LOCAL_BUILD=' | Set-Content "$work\.env"
+    (Get-Content "$work\.env") -notmatch '^AGENTS_LOCAL_BUILD=' | Set-Content "$work\.env"
     Invoke-Launcher 'bash'
-    Remove-Item Env:IMAGE_PREFIX
-    Check 'IMAGE_PREFIX sets the pulled image' ($calls[0] -like 'pull registry.example/me/aw-claude:*')
+    Remove-Item Env:AGENTS_IMAGE_PREFIX
+    Check 'AGENTS_IMAGE_PREFIX sets the pulled image' ($calls[0] -like 'pull registry.example/me/aw-claude:*')
 
     $env:WORKSPACE_DIR = "$work\does-not-exist"
     Invoke-Launcher 'bash'

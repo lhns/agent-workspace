@@ -42,7 +42,7 @@ jobs:
       # Runner uid is 1001, the container's is 1000: umask 000 makes the launcher's state dirs writable.
       - name: First launch builds the image and the agent starts
         env:
-          LOCAL_BUILD: "1"
+          AGENTS_LOCAL_BUILD: "1"
         run: |
           umask 000
           set -o pipefail
@@ -54,7 +54,7 @@ jobs:
 
       - name: Second launch does not rebuild
         env:
-          LOCAL_BUILD: "1"
+          AGENTS_LOCAL_BUILD: "1"
         run: |
           set -o pipefail
           ./run-${{ matrix.harness }}.sh bash -c 'echo launched' 2>&1 | tee second.log
@@ -70,9 +70,9 @@ jobs:
           OWNER: ${{ github.repository_owner }}
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
-          # Also the launcher's IMAGE_PREFIX in the next step, so forks test their own registry.
+          # Also the launcher's AGENTS_IMAGE_PREFIX in the next step, so forks test their own registry.
           prefix="ghcr.io/${OWNER,,}/agent-workspace"
-          echo "IMAGE_PREFIX=$prefix" >> "$GITHUB_ENV"
+          echo "AGENTS_IMAGE_PREFIX=$prefix" >> "$GITHUB_ENV"
           ref="$prefix-${{ matrix.harness }}:$(cat agents/${{ matrix.harness }}/.build.sha256)"
           if docker manifest inspect "$ref" > /dev/null 2>&1; then
             echo "$ref already exists"
