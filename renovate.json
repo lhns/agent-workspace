@@ -3,6 +3,8 @@
   "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
   "dependencyDashboard": true,
   "pinDigests": true,
+  "prHourlyLimit": 0,
+  "gitAuthor": "Renovate Bot <bot@renovateapp.com>",
   "customManagers": [
     {
       "description": "ARG <NAME>_VERSION pinned in agents/*/Dockerfile, annotated with '# renovate: datasource=... depName=...'; an optional ARG <NAME>_COMMIT on the next line holds the digest.",
