@@ -72,6 +72,6 @@ Hermes refuses a home folder it can't keep private, so its home (`~/.hermes`) st
 
 `git pull`. Local files are all gitignored, so this never conflicts. Agent versions (and the base image digest) are pinned in the Dockerfiles; [Renovate](renovate.json) opens a PR for each new release. Once merged, `git pull` changes the Dockerfile, so the next launch pulls the new image (CI publishes it after the merge; until then it builds locally). Apt packages are only refreshed when a Dockerfile changes; to force it, `AGENTS_LOCAL_BUILD=1` plus `docker compose build --no-cache <harness>`.
 
-CI (`.github/workflows/ci.yml`) builds every image through the real launcher and checks that each agent starts; on `main` it then publishes the tested image to ghcr.io (the packages must be set public once) and checks the pull path; it also runs shellcheck/actionlint and tests `run.bat` against a stub docker. For Renovate to run, add a `RENOVATE_TOKEN` repository secret (a personal access token, so its PRs trigger CI).
+CI (`.github/workflows/ci.yml`) builds every image through the real launcher and checks that each agent starts; on `main` it then publishes the tested image to ghcr.io (the packages must be set public once) and checks the pull path; it also runs shellcheck/actionlint and tests `run.bat` against a stub docker. Renovate runs as the [Renovate GitHub App](https://github.com/apps/renovate), installed on the repository; forks install it on theirs.
 
 Design decisions: [docs/adr](docs/adr/).
