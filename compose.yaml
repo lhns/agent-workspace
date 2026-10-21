@@ -5,20 +5,34 @@ x-workspace: &workspace ${WORKSPACE_DIR:-./workspace}:/workspace
 # Directory mount: git rewrites config via lockfile + rename, which a single-file mount breaks.
 x-git: &git ./shared/git:/home/agent/.config/git
 
+# Proxy settings from the shell that starts the launcher (or .env), for builds and agents.
+# Both spellings are passed: apt, curl and git read lowercase, most others uppercase.
+x-proxy: &proxy
+  HTTP_PROXY: ${HTTP_PROXY:-${http_proxy:-}}
+  HTTPS_PROXY: ${HTTPS_PROXY:-${https_proxy:-}}
+  NO_PROXY: ${NO_PROXY:-${no_proxy:-}}
+  http_proxy: ${http_proxy:-${HTTP_PROXY:-}}
+  https_proxy: ${https_proxy:-${HTTPS_PROXY:-}}
+  no_proxy: ${no_proxy:-${NO_PROXY:-}}
+
 x-harness: &harness
   stdin_open: true
   tty: true
   env_file: .env
+  environment:
+    <<: *proxy
+    # Node's built-in fetch ignores the proxy variables unless this is set.
+    NODE_USE_ENV_PROXY: "1"
 
 services:
   # Harness images build FROM this one, so the run scripts build it first. Never started.
   base:
-    build: ./agents/base
+    build: { context: ./agents/base, args: *proxy }
     image: agent-workspace-base
 
   claude:
     <<: *harness
-    build: ./agents/claude
+    build: { context: ./agents/claude, args: *proxy }
     volumes:
       - *workspace
       - *git
@@ -27,7 +41,7 @@ services:
 
   opencode:
     <<: *harness
-    build: ./agents/opencode
+    build: { context: ./agents/opencode, args: *proxy }
     volumes:
       - *workspace
       - *git
@@ -37,7 +51,7 @@ services:
 
   pi:
     <<: *harness
-    build: ./agents/pi
+    build: { context: ./agents/pi, args: *proxy }
     volumes:
       - *workspace
       - *git
@@ -46,7 +60,7 @@ services:
 
   cline:
     <<: *harness
-    build: ./agents/cline
+    build: { context: ./agents/cline, args: *proxy }
     volumes:
       - *workspace
       - *git
@@ -55,13 +69,12 @@ services:
 
   hermes:
     <<: *harness
-    build: ./agents/hermes
+    build: { context: ./agents/hermes, args: *proxy }
+    # Hermes refuses a bind-mounted home, so this copies its state from and back to the
+    # config folder around each run. Mounted, not built in: script edits need no rebuild.
+    entrypoint: [bash, /usr/local/lib/hermes-entrypoint.sh]
     volumes:
       - *workspace
       - *git
-      # Named volume, not a bind mount: hermes keeps its venv (symlinks) in ~/.hermes, and
-      # Windows bind mounts refuse symlinks. Docker seeds it from the image on first use.
-      - hermes-home:/home/agent/.hermes
-
-volumes:
-  hermes-home:
+      - ./agents/hermes/config:/home/agent/.hermes-config
+      - ./agents/hermes/entrypoint.sh:/usr/local/lib/hermes-entrypoint.sh:ro
