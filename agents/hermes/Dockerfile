@@ -7,8 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 rsyn
 USER agent
 # Releases are commits on release/<version> branches, not on main; the installer wants both.
 # renovate: datasource=github-tags depName=NousResearch/hermes-agent
-ARG HERMES_VERSION=v0.22.2
-ARG HERMES_COMMIT=d923a5eb487a17c0a68801bba9ef0f56c81040a8
+ARG HERMES_VERSION=v0.22.3
+ARG HERMES_COMMIT=5b147ab036d6d19131bff8d20701b5001eab844a
 # Download first: piped into bash, a failed download (e.g. HTTP 429) would build an empty image.
 RUN curl -fsSL --retry 5 --retry-all-errors -o /tmp/install.sh \
         https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_COMMIT}/scripts/install.sh \
