@@ -15,9 +15,13 @@ concurrency:
 
 jobs:
   # Runs the real Linux launcher per harness: it builds the image, then the agent must start.
+  # On main the tested image is published to ghcr.io and the launcher's pull path is checked.
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -37,6 +41,8 @@ jobs:
 
       # Runner uid is 1001, the container's is 1000: umask 000 makes the launcher's state dirs writable.
       - name: First launch builds the image and the agent starts
+        env:
+          AGENTS_LOCAL_BUILD: "1"
         run: |
           umask 000
           set -o pipefail
@@ -47,11 +53,45 @@ jobs:
             while read -r d; do test -d "agents/${{ matrix.harness }}/$d" || exit 1; done
 
       - name: Second launch does not rebuild
+        env:
+          AGENTS_LOCAL_BUILD: "1"
         run: |
           set -o pipefail
           ./run-${{ matrix.harness }}.sh bash -c 'echo launched' 2>&1 | tee second.log
           grep -q '^launched$' second.log
           ! grep -q '^Building' second.log
+
+      # Publish only what passed above. The tag is the Dockerfile hash, so an existing tag is the same image.
+      - name: Publish image to ghcr.io
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+          # Also the launcher's AGENTS_IMAGE_PREFIX in the next step, so forks test their own registry.
+          prefix="ghcr.io/${OWNER,,}/agent-workspace"
+          echo "AGENTS_IMAGE_PREFIX=$prefix" >> "$GITHUB_ENV"
+          ref="$prefix-${{ matrix.harness }}:$(cat agents/${{ matrix.harness }}/.build.sha256)"
+          if docker manifest inspect "$ref" > /dev/null 2>&1; then
+            echo "$ref already exists"
+          else
+            docker tag agent-workspace-${{ matrix.harness }} "$ref"
+            docker push "$ref"
+          fi
+
+      - name: Launch pulls the published image
+        if: github.event_name != 'pull_request'
+        run: |
+          umask 000
+          set -o pipefail
+          docker rmi agent-workspace-${{ matrix.harness }}
+          rm agents/${{ matrix.harness }}/.build.sha256
+          ./run-${{ matrix.harness }}.sh bash -c 'echo launched' 2>&1 | tee pull.log
+          grep -q '^Pulling ${{ matrix.harness }} image' pull.log
+          grep -q '^launched$' pull.log
+          ! grep -q '^Building' pull.log
 
   lint:
     runs-on: ubuntu-latest
