@@ -70,7 +70,10 @@ jobs:
           OWNER: ${{ github.repository_owner }}
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
-          ref="ghcr.io/${OWNER,,}/agent-workspace-${{ matrix.harness }}:$(cat agents/${{ matrix.harness }}/.build.sha256)"
+          # Also the launcher's IMAGE_PREFIX in the next step, so forks test their own registry.
+          prefix="ghcr.io/${OWNER,,}/agent-workspace"
+          echo "IMAGE_PREFIX=$prefix" >> "$GITHUB_ENV"
+          ref="$prefix-${{ matrix.harness }}:$(cat agents/${{ matrix.harness }}/.build.sha256)"
           if docker manifest inspect "$ref" > /dev/null 2>&1; then
             echo "$ref already exists"
           else
@@ -78,9 +81,8 @@ jobs:
             docker push "$ref"
           fi
 
-      # The launcher hardcodes the lhns registry, so this only means something there.
       - name: Launch pulls the published image
-        if: github.event_name != 'pull_request' && github.repository_owner == 'lhns'
+        if: github.event_name != 'pull_request'
         run: |
           umask 000
           set -o pipefail

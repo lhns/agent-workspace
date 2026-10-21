@@ -21,6 +21,9 @@ fi
 
 # Prebuilt images come from ghcr.io unless LOCAL_BUILD is non-empty (shell env wins over .env).
 local_build=${LOCAL_BUILD-$(sed -n 's/^LOCAL_BUILD=//p' .env | tail -n1 | tr -d '\r"')}
+# Prebuilt images are <prefix>-<harness>:<hash>; shell env wins over .env.
+prefix=${IMAGE_PREFIX:-$(sed -n 's/^IMAGE_PREFIX=//p' .env | tail -n1 | tr -d '\r"')}
+prefix=${prefix:-ghcr.io/lhns/agent-workspace}
 
 # State dirs, so docker doesn't create them as root.
 mkdir -p shared/git
@@ -40,11 +43,10 @@ fi
 # asking docker). The hash is also the ghcr tag, so a pull gets exactly this checkout's
 # image; an edited Dockerfile misses the registry and builds locally. Docker's layer cache
 # keeps a local rebuild short.
-owner=lhns
 hashfile=agents/$h/.build.sha256
 new=$(cat agents/base/Dockerfile "agents/$h/Dockerfile" | sha256sum | cut -d' ' -f1)
 if [ "$new" != "$(cat "$hashfile" 2>/dev/null)" ]; then
-    ref=ghcr.io/$owner/agent-workspace-$h:$new
+    ref=$prefix-$h:$new
     pulled=
     if [ -z "$local_build" ]; then
         echo "Pulling $h image..."

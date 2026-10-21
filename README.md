@@ -14,7 +14,7 @@ Same for `opencode`, `pi`, `cline`, `hermes`. Extra arguments go to the agent, o
 
 The first run creates `.env` from `.env.example` and stops until you edit it (uncomment the keys you use).
 
-The first run, and the first run after a `git pull` that changed a Dockerfile, pulls the matching prebuilt image from ghcr.io (tagged with a hash of the Dockerfiles, kept in `agents/<harness>/.build.sha256`; delete it to redo this). If there is none (edited Dockerfile, non-amd64 machine, offline), it builds locally instead. `LOCAL_BUILD=1` (in `.env` or the shell) always builds locally.
+The first run, and the first run after a `git pull` that changed a Dockerfile, pulls the matching prebuilt image from ghcr.io (tagged with a hash of the Dockerfiles, kept in `agents/<harness>/.build.sha256`; delete it to redo this). If there is none (edited Dockerfile, non-amd64 machine, offline), it builds locally instead. `LOCAL_BUILD=1` (in `.env` or the shell) always builds locally. `IMAGE_PREFIX` (default `ghcr.io/lhns/agent-workspace`) sets where images are pulled from, e.g. a fork or mirror.
 
 ## Layout
 
