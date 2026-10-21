@@ -20,7 +20,8 @@ excludes=(--exclude=/hermes-agent --exclude=/installs --exclude=/tools --exclude
     --exclude=/gateway_state.json --exclude=/processes.json --exclude=/spawn-ledger.json
     --exclude='*.lock' --exclude='*-shm' --exclude=/.plugin-deps --exclude=/.bootstrap)
 # Mount permissions mean nothing on Windows (0777); keep state private like hermes does.
-sync_tree() { rsync -rlt --delete --chmod=go-rwx "${excludes[@]}" "$1/" "$2/"; }
+# Directory times are skipped: the mount root may belong to another uid (CI), which can't set them.
+sync_tree() { rsync -rlt --omit-dir-times --delete --chmod=go-rwx "${excludes[@]}" "$1/" "$2/"; }
 
 # Plugin dependencies are a new dependency generation (a venv, so symlinks) under installs/.
 # It is saved as a tar after the command and restored at the next start.
