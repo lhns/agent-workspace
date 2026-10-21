@@ -12,6 +12,8 @@ for /f "delims==" %%K in ('findstr /r /b "[A-Z_]*=" .env.example') do (
 
 rem Workspace: shell env wins over .env, like compose's own interpolation.
 if not defined WORKSPACE_DIR for /f "usebackq tokens=1,* delims==" %%A in (".env") do if "%%A"=="WORKSPACE_DIR" if not "%%B"=="" set "WORKSPACE_DIR=%%~B"
+rem Prebuilt images come from ghcr.io unless LOCAL_BUILD is non-empty (shell env wins over .env).
+if not defined LOCAL_BUILD for /f "usebackq tokens=1,* delims==" %%A in (".env") do if "%%A"=="LOCAL_BUILD" if not "%%B"=="" set "LOCAL_BUILD=%%~B"
 if defined WORKSPACE_DIR (
     if not exist "!WORKSPACE_DIR!\" (echo WORKSPACE_DIR '!WORKSPACE_DIR!' does not exist & exit /b 1)
 ) else (
@@ -39,16 +41,34 @@ if not exist shared\git\config (
     )
 )
 
-rem Rebuild only when a Dockerfile changed since the last build (much faster than asking
-rem docker); docker's layer cache still keeps that rebuild short.
+rem Update the image only when a Dockerfile changed since the last time (much faster than
+rem asking docker). The hash is also the ghcr tag, so a pull gets exactly this checkout's
+rem image; an edited Dockerfile misses the registry and builds locally. Docker's layer cache
+rem keeps a local rebuild short.
+set "OWNER=lhns"
 set "HASHFILE=agents\%HARNESS%\.build.sha256"
-for /f "usebackq delims=" %%H in (`powershell -NoProfile -Command "(Get-FileHash agents\base\Dockerfile).Hash + (Get-FileHash agents\%HARNESS%\Dockerfile).Hash"`) do set "NEW_HASH=%%H"
+for /f "usebackq delims=" %%H in (`powershell -NoProfile -Command "$b = [IO.File]::ReadAllBytes('agents\base\Dockerfile') + [IO.File]::ReadAllBytes('agents\%HARNESS%\Dockerfile'); [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($b)).Replace('-', '').ToLower()"`) do set "NEW_HASH=%%H"
 set "OLD_HASH="
 if exist "%HASHFILE%" set /p OLD_HASH=<"%HASHFILE%"
 if not "%NEW_HASH%"=="%OLD_HASH%" (
-    echo Building %HARNESS% image...
-    docker compose build base || exit /b 1
-    docker compose build %HARNESS% || exit /b 1
+    set "REF=ghcr.io/%OWNER%/agent-workspace-%HARNESS%:%NEW_HASH%"
+    set "PULLED="
+    if not defined LOCAL_BUILD (
+        echo Pulling %HARNESS% image...
+        docker pull "!REF!"
+        if errorlevel 1 (
+            echo No prebuilt %HARNESS% image available, building locally.
+        ) else (
+            docker tag "!REF!" agent-workspace-%HARNESS% || exit /b 1
+            docker rmi "!REF!" >nul
+            set "PULLED=1"
+        )
+    )
+    if not defined PULLED (
+        echo Building %HARNESS% image...
+        docker compose build base || exit /b 1
+        docker compose build %HARNESS% || exit /b 1
+    )
     >"%HASHFILE%" echo %NEW_HASH%
 )
 

@@ -19,6 +19,9 @@ elif [ ! -d "$ws" ]; then
     echo "WORKSPACE_DIR '$ws' does not exist" >&2; exit 1
 fi
 
+# Prebuilt images come from ghcr.io unless LOCAL_BUILD is non-empty (shell env wins over .env).
+local_build=${LOCAL_BUILD-$(sed -n 's/^LOCAL_BUILD=//p' .env | tail -n1 | tr -d '\r"')}
+
 # State dirs, so docker doesn't create them as root.
 mkdir -p shared/git
 [ -e shared/AGENTS.md ] || : > shared/AGENTS.md
@@ -33,14 +36,31 @@ if [ ! -e shared/git/config ]; then
     done
 fi
 
-# Rebuild only when a Dockerfile changed since the last build (much faster than asking
-# docker); docker's layer cache still keeps that rebuild short.
+# Update the image only when a Dockerfile changed since the last time (much faster than
+# asking docker). The hash is also the ghcr tag, so a pull gets exactly this checkout's
+# image; an edited Dockerfile misses the registry and builds locally. Docker's layer cache
+# keeps a local rebuild short.
+owner=lhns
 hashfile=agents/$h/.build.sha256
 new=$(cat agents/base/Dockerfile "agents/$h/Dockerfile" | sha256sum | cut -d' ' -f1)
 if [ "$new" != "$(cat "$hashfile" 2>/dev/null)" ]; then
-    echo "Building $h image..."
-    docker compose build base
-    docker compose build "$h"
+    ref=ghcr.io/$owner/agent-workspace-$h:$new
+    pulled=
+    if [ -z "$local_build" ]; then
+        echo "Pulling $h image..."
+        if docker pull "$ref"; then
+            docker tag "$ref" "agent-workspace-$h"
+            docker rmi "$ref" >/dev/null
+            pulled=1
+        else
+            echo "No prebuilt $h image available, building locally."
+        fi
+    fi
+    if [ -z "$pulled" ]; then
+        echo "Building $h image..."
+        docker compose build base
+        docker compose build "$h"
+    fi
     echo "$new" > "$hashfile"
 fi
 

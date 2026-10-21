@@ -12,7 +12,9 @@ Harnesses: `claude` (Claude Code), `opencode`, `pi`, `cline`, `hermes`. Docker w
 
 Same for `opencode`, `pi`, `cline`, `hermes`. Extra arguments go to the agent, or start a shell with `run-claude.bat bash`.
 
-The first run creates `.env` from `.env.example` and stops until you edit it (uncomment the keys you use). Later runs rebuild only when a Dockerfile changed (a hash in `agents/<harness>/.build.sha256`; delete it to force a rebuild).
+The first run creates `.env` from `.env.example` and stops until you edit it (uncomment the keys you use).
+
+The first run, and the first run after a `git pull` that changed a Dockerfile, pulls the matching prebuilt image from ghcr.io (tagged with a hash of the Dockerfiles, kept in `agents/<harness>/.build.sha256`; delete it to redo this). If there is none (edited Dockerfile, non-amd64 machine, offline), it builds locally instead. `LOCAL_BUILD=1` (in `.env` or the shell) always builds locally.
 
 ## Layout
 
@@ -60,9 +62,9 @@ Write `shared/AGENTS.md` once; it is mounted where each harness reads global ins
 
 ## Update
 
-`git pull`. Local files are all gitignored, so this never conflicts. Agent versions (and the base image digest) are pinned in the Dockerfiles; [Renovate](renovate.json) opens a PR for each new release. Once merged, `git pull` changes the Dockerfile, so the next launch rebuilds that harness. `docker compose build --no-cache <harness>` is only needed to force a rebuild of the tools installed from apt.
+`git pull`. Local files are all gitignored, so this never conflicts. Agent versions (and the base image digest) are pinned in the Dockerfiles; [Renovate](renovate.json) opens a PR for each new release. Once merged, `git pull` changes the Dockerfile, so the next launch pulls the new image (CI publishes it after the merge; until then it builds locally). Apt packages are only refreshed when a Dockerfile changes; to force it, `LOCAL_BUILD=1` plus `docker compose build --no-cache <harness>`.
 
-CI (`.github/workflows/ci.yml`) builds every image through the real launcher and checks that each agent starts; it also runs shellcheck/actionlint and tests `run.bat` against a stub docker. For Renovate to run, add a `RENOVATE_TOKEN` repository secret (a personal access token, so its PRs trigger CI).
+CI (`.github/workflows/ci.yml`) builds every image through the real launcher and checks that each agent starts; on `main` it then publishes the tested image to ghcr.io (the packages must be set public once) and checks the pull path; it also runs shellcheck/actionlint and tests `run.bat` against a stub docker. For Renovate to run, add a `RENOVATE_TOKEN` repository secret (a personal access token, so its PRs trigger CI).
 
 Hermes keeps its Python environment in its Docker volume, which is filled from the image only on first use. After rebuilding hermes, run `hermes pm repair` inside so the dependencies match the new code, or delete the volume to start fresh (`docker volume rm agent-workspace_hermes-home`, which also loses hermes state). On first run, if it asks for setup, run `hermes setup` inside.
 
