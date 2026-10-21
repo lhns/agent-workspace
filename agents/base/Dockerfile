@@ -1,6 +1,8 @@
 # Shared by every harness image: OS, tools, user. Harness images build FROM it.
 FROM node:24-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5
 
+LABEL org.opencontainers.image.source=https://github.com/lhns/agent-workspace
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
         bash \
         ca-certificates \
