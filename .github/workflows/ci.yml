@@ -16,7 +16,8 @@ concurrency:
 jobs:
   # Runs the real Linux launcher per harness: it builds the image, then the agent must start.
   # On main the tested image is published to ghcr.io and the launcher's pull path is checked.
-  smoke:
+  image:
+    name: Build, test, publish (${{ matrix.harness }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
