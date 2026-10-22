@@ -14,20 +14,24 @@ Same for `opencode`, `pi`, `cline`, `hermes`. Extra arguments go to the agent, o
 
 The first run creates `.env` from `.env.example` and stops until you edit it (uncomment the keys you use).
 
-The first run, and the first run after a `git pull` that changed a Dockerfile, pulls the matching prebuilt image from ghcr.io (tagged with a hash of the Dockerfiles, kept in `agents/<harness>/.build.sha256`; delete it to redo this). If there is none (edited Dockerfile, non-amd64 machine, offline), it builds locally instead. `AGENTS_LOCAL_BUILD=1` (in `.env` or the shell) always builds locally. `AGENTS_IMAGE_PREFIX` (default `ghcr.io/lhns/agent-workspace`) sets where images are pulled from, e.g. a fork or mirror.
+The first run, and any run after a `git pull` that changed a Dockerfile (or after the image was pruned), pulls the matching prebuilt image from ghcr.io, tagged with a hash of the Dockerfiles (kept in `agents/<harness>/.build.sha256`; delete it to redo this). If there is none (edited Dockerfile, non-amd64 machine, offline), it builds locally instead.
 
 ## Layout
 
 ```
-agents/base/          shared image: OS, tools, user (uid 1000 "agent")
-agents/<harness>/     Dockerfile (only the harness install, FROM base) + its local state
-agents/run.*          launch logic, one file per OS; agents/harness-dirs lists state dirs
-run-<harness>.*       one-line launchers
-compose.yaml          one service per harness
-tests/                CI smoke test (agent starts) and run.bat test
-shared/               local, gitignored: git config + credentials, AGENTS.md
-workspace/            default workspace
-docs/adr/             design decisions
+agents/base/                   shared image: OS, tools, user (uid 1000 "agent")
+agents/<harness>/              Dockerfile (only the harness install, FROM base) + its local state
+agents/hermes/entrypoint.sh    copies hermes state around each run (see Hermes state)
+agents/run.*                   launch logic, one file per OS; agents/harness-dirs lists state dirs
+run-<harness>.*                one-line launchers
+compose.yaml                   one service per harness
+.env.example                   template for .env
+tests/                         CI smoke test (agent starts) and run.bat test
+shared/                        local, gitignored: git config + credentials, AGENTS.md
+workspace/                     default workspace
+docs/adr/                      design decisions
+renovate.json                  dependency updates
+.github/                       CI and Renovate workflows
 ```
 
 | Shared by all harnesses | Per harness |
@@ -38,9 +42,11 @@ docs/adr/             design decisions
 
 ## Settings
 
-- `.env`: one file for all harnesses. Add API keys there or log in inside the container.
+- `.env`: one file for all harnesses. A non-empty shell variable overrides the same name in `.env`. Add API keys there or log in inside the container.
 - `WORKSPACE_DIR` in `.env`: the folder the agent works in; empty means `./workspace`. A shell variable overrides it per run: `WORKSPACE_DIR=~/code/foo ./run-claude.sh`. The folder must exist.
 - Proxy: set `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (either case; each sets both spellings) in the shell before starting a launcher, or in `.env`. They are used for image builds and passed to the agent. A proxy on the host itself is `host.docker.internal`, not `localhost`. Pulls of the prebuilt images are done by Docker itself and use Docker's proxy settings; if a pull fails, the local build uses these variables.
+- `AGENTS_LOCAL_BUILD`: non-empty (e.g. `1`) always builds the image locally instead of pulling it.
+- `AGENTS_IMAGE_PREFIX`: where prebuilt images are pulled from, default `ghcr.io/lhns/agent-workspace`; set it for a fork or mirror.
 - `AGENTS_WORKSPACE_CONSISTENCY`: mount consistency options for the workspace, passed to Docker as is (e.g. for remote Docker with caching mounts). Empty means Docker's default.
 - `compose.override.yaml`: your own compose tweaks (extra mounts, ports). Gitignored, merged automatically.
 
@@ -71,8 +77,10 @@ Hermes refuses a home folder it can't keep private, so its home (`~/.hermes`) st
 
 ## Update
 
-`git pull`. Local files are all gitignored, so this never conflicts. Agent versions (and the base image digest) are pinned in the Dockerfiles; [Renovate](renovate.json) opens a PR for each new release. Once merged, `git pull` changes the Dockerfile, so the next launch pulls the new image (CI publishes it after the merge; until then it builds locally). Apt packages are only refreshed when a Dockerfile changes; to force it, `AGENTS_LOCAL_BUILD=1` plus `docker compose build --no-cache <harness>`.
+`git pull`. Local files are all gitignored, so this never conflicts. Agent versions (and the base image digest) are pinned in the Dockerfiles; [Renovate](renovate.json) opens a PR for each new release. Once merged, `git pull` changes the Dockerfile, so the next launch pulls the new image (CI publishes it after the merge; until then it builds locally). Apt packages are only refreshed when a Dockerfile changes; to force it: `docker compose build --no-cache base`, then `docker compose build --no-cache <harness>`.
 
-CI (`.github/workflows/ci.yml`) builds every image through the real launcher and checks that each agent starts; on `main` it then publishes the tested image to ghcr.io (the packages must be set public once) and checks the pull path; it also runs shellcheck/actionlint and tests `run.bat` against a stub docker. For Renovate to run, add a `RENOVATE_TOKEN` repository secret (a personal access token, so its PRs trigger CI).
+## Development
+
+CI (`.github/workflows/ci.yml`) builds every image through the real launcher and checks that each agent starts; on `main` it then publishes the tested image to ghcr.io (the packages must be set public once) and checks the pull path. It also runs shellcheck/actionlint and tests `run.bat` against a stub docker. Renovate runs from a scheduled workflow and needs a `RENOVATE_TOKEN` repository secret (a personal access token, so its PRs trigger CI); see [ADR 17](docs/adr/0017-pinned-versions-renovate-ci.md) and [ADR 19](docs/adr/0019-prebuilt-images-on-ghcr.md).
 
 Design decisions: [docs/adr](docs/adr/).

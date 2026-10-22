@@ -11,7 +11,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Main runs finish, so every main commit's images get published.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # Runs the real Linux launcher per harness: it builds the image, then the agent must start.
@@ -53,6 +54,7 @@ jobs:
           sed -n "s/^${{ matrix.harness }} //p" agents/harness-dirs | tr ' ' '\n' |
             while read -r d; do test -d "agents/${{ matrix.harness }}/$d" || exit 1; done
 
+      # AGENTS_LOCAL_BUILD stays set so a missing pull can't hide a rebuild: the `^Building` check is meaningful.
       - name: Second launch does not rebuild
         env:
           AGENTS_LOCAL_BUILD: "1"
@@ -60,11 +62,11 @@ jobs:
           set -o pipefail
           ./run-${{ matrix.harness }}.sh bash -c 'echo launched' 2>&1 | tee second.log
           grep -q '^launched$' second.log
-          ! grep -q '^Building' second.log
+          if grep -q '^Building' second.log; then echo "unexpected rebuild"; exit 1; fi
 
-      # Publish only what passed above. The tag is the Dockerfile hash, so an existing tag is the same image.
+      # Publish only what passed above, and only from main. The tag is the Dockerfile hash, so an existing tag is the same image.
       - name: Publish image to ghcr.io
-        if: github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_ACTOR: ${{ github.actor }}
@@ -82,9 +84,11 @@ jobs:
             docker push "$ref"
           fi
 
+      # Main only, like the publish. Logged out, so a private package fails here as it would for users.
       - name: Launch pulls the published image
-        if: github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main'
         run: |
+          docker logout ghcr.io
           umask 000
           set -o pipefail
           docker rmi agent-workspace-${{ matrix.harness }}
@@ -92,7 +96,7 @@ jobs:
           ./run-${{ matrix.harness }}.sh bash -c 'echo launched' 2>&1 | tee pull.log
           grep -q '^Pulling ${{ matrix.harness }} image' pull.log
           grep -q '^launched$' pull.log
-          ! grep -q '^Building' pull.log
+          if grep -q '^Building' pull.log; then echo "unexpected rebuild"; exit 1; fi
 
   lint:
     runs-on: ubuntu-latest

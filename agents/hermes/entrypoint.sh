@@ -8,7 +8,10 @@
 set -u
 home=${HERMES_HOME:-$HOME/.hermes}
 data=/home/agent/.hermes-config
-bootstrap=$(echo "$home"/installs/*/)bootstrap
+# Hermes' bootstrap state lives in the one revision dir under installs/; skipped if that isn't unique.
+revisions=("$home"/installs/*/)
+bootstrap=
+if [ "${#revisions[@]}" = 1 ] && [ -d "${revisions[0]}" ]; then bootstrap=${revisions[0]}bootstrap; fi
 deps=$data/.plugin-deps
 # Dependency generations the image ships, one per line; differs on every build.
 image_generations=/home/agent/.hermes-image-generations
@@ -31,7 +34,14 @@ restore_deps() {
     [ -f "$deps/installs.tar" ] || return 0
     if cmp -s "$deps/image-generations" "$image_generations"; then
         echo "Restoring plugin dependencies from the host folder..." >&2
-        tar -xf "$deps/installs.tar" -C "$home"
+        if ! tar -xf "$deps/installs.tar" -C "$home"; then
+            echo "Restoring plugin dependencies failed; hermes rebuilds them when a plugin needs them." >&2
+            # Drop what was half-extracted: every generation the image doesn't ship.
+            for g in "$home"/installs/*/environments/* "$home"/installs/*/pm-runtime/generations/*; do
+                g=${g#"$home"/}
+                grep -qxF "$g" "$image_generations" || rm -rf "${home:?}/$g"
+            done
+        fi
     else
         echo "Plugin dependencies in the host folder are from another hermes image; hermes" \
             "rebuilds them when a plugin needs them (once, a few minutes)." >&2
@@ -58,7 +68,7 @@ if [ -n "$(ls -A "$data")" ]; then
     # The sync back deletes what the home lacks, so a partial copy must not run hermes.
     sync_tree "$data" "$home" || { echo "Copying hermes state from the host folder failed." >&2; exit 1; }
     # Hermes migrates the home once per installed revision and records that under installs/.
-    if [ -d "$data/.bootstrap" ]; then mkdir -p "$bootstrap" && rsync -rt "$data/.bootstrap/" "$bootstrap/"; fi
+    if [ -n "$bootstrap" ] && [ -d "$data/.bootstrap" ]; then mkdir -p "$bootstrap" && rsync -rt "$data/.bootstrap/" "$bootstrap/"; fi
 fi
 selected_at_start=$(selection)
 
@@ -73,7 +83,7 @@ if [ $$ = 1 ]; then
     # Never copy files a process still writes; a killed SQLite writer leaves a consistent db+WAL.
     kill -KILL -1 2>/dev/null
 fi
-sync_tree "$home" "$data"
-if [ -d "$bootstrap" ]; then rsync -rt --delete "$bootstrap/" "$data/.bootstrap/"; fi
+sync_tree "$home" "$data" || echo "Saving hermes state to the host folder failed." >&2
+if [ -n "$bootstrap" ] && [ -d "$bootstrap" ]; then rsync -rt --delete "$bootstrap/" "$data/.bootstrap/"; fi
 save_deps
 exit $status
