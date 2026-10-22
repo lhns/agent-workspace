@@ -1,5 +1,5 @@
 # Shared by every harness image: OS, tools, user. Harness images build FROM it.
-FROM node:24-slim@sha256:91acba91b842bec0bf7ea6f5e09c644c7ccad72c4996ed9616d861d1c7cd60d4
+FROM node:24-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205
 
 LABEL org.opencontainers.image.source=https://github.com/lhns/agent-workspace
 
