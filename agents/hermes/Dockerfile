@@ -8,8 +8,8 @@ USER agent
 # The installer clones a branch, checks the pinned commit is on it and checks that out. Release
 # commits end up on main; release/<version> branches exist only for some releases.
 # renovate: datasource=github-tags depName=NousResearch/hermes-agent
-ARG HERMES_VERSION=v0.22.3
-ARG HERMES_COMMIT=5b147ab036d6d19131bff8d20701b5001eab844a
+ARG HERMES_VERSION=v0.22.4
+ARG HERMES_COMMIT=4d04303818b61bf3aa09278af48356315515965b
 # Download first: piped into bash, a failed download (e.g. HTTP 429) would build an empty image.
 RUN curl -fsSL --retry 5 --retry-all-errors -o /tmp/install.sh \
         https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_COMMIT}/scripts/install.sh \
