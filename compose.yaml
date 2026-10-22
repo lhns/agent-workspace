@@ -4,7 +4,9 @@ name: agent-workspace
 x-workspace: &workspace
   type: bind
   source: ${WORKSPACE_DIR:-./workspace}
-  target: /workspace
+  # The launchers set this to the host path, so tools that key sessions by directory keep
+  # them per host folder. Plain `docker compose run` keeps /workspace.
+  target: ${AGENTS_WORKSPACE_TARGET:-/workspace}
   # Passed through for remote Docker setups with caching mounts; empty = Docker's default.
   consistency: ${AGENTS_WORKSPACE_CONSISTENCY:-}
   # The launchers create ./workspace and refuse a missing WORKSPACE_DIR; never create it here.
@@ -13,6 +15,9 @@ x-workspace: &workspace
 
 # Directory mount: git rewrites config via lockfile + rename, which a single-file mount breaks.
 x-git: &git ./shared/git:/home/agent/.config/git
+
+# Mounted, not built in: script edits need no rebuild. Each service's command runs it.
+x-start: &start ./agents/start.sh:/usr/local/lib/agents-start.sh:ro
 
 # Proxy settings from the shell that starts the launcher, else from .env, for builds and agents.
 # Either spelling sets both: apt, curl and git read lowercase, most others uppercase.
@@ -27,8 +32,11 @@ x-proxy: &proxy
 x-harness: &harness
   stdin_open: true
   tty: true
+  working_dir: ${AGENTS_WORKSPACE_TARGET:-/workspace}
   env_file: .env
   environment:
+    # Shell value wins over .env; read by agents/start.sh.
+    AGENTS_AUTORESUME: ${AGENTS_AUTORESUME:-}
     <<: *proxy
     # Node's built-in fetch ignores the proxy variables unless this is set.
     NODE_USE_ENV_PROXY: "1"
@@ -41,15 +49,18 @@ services:
 
   claude:
     <<: *harness
+    command: [bash, /usr/local/lib/agents-start.sh, claude]
     build: { context: ./agents/claude, args: *proxy }
     volumes:
       - *workspace
       - *git
       - ./agents/claude/config:/home/agent/.claude
       - ./shared/AGENTS.md:/home/agent/.claude/CLAUDE.md
+      - *start
 
   opencode:
     <<: *harness
+    command: [bash, /usr/local/lib/agents-start.sh, opencode]
     build: { context: ./agents/opencode, args: *proxy }
     volumes:
       - *workspace
@@ -57,27 +68,33 @@ services:
       - ./agents/opencode/config:/home/agent/.config/opencode
       - ./agents/opencode/data:/home/agent/.local/share/opencode
       - ./shared/AGENTS.md:/home/agent/.config/opencode/AGENTS.md
+      - *start
 
   pi:
     <<: *harness
+    command: [bash, /usr/local/lib/agents-start.sh, pi]
     build: { context: ./agents/pi, args: *proxy }
     volumes:
       - *workspace
       - *git
       - ./agents/pi/config:/home/agent/.pi/agent
       - ./shared/AGENTS.md:/home/agent/.pi/agent/AGENTS.md
+      - *start
 
   cline:
     <<: *harness
+    command: [bash, /usr/local/lib/agents-start.sh, cline]
     build: { context: ./agents/cline, args: *proxy }
     volumes:
       - *workspace
       - *git
       - ./agents/cline/config:/home/agent/.cline
       - ./shared/AGENTS.md:/home/agent/.agents/AGENTS.md
+      - *start
 
   hermes:
     <<: *harness
+    command: [bash, /usr/local/lib/agents-start.sh, hermes]
     build: { context: ./agents/hermes, args: *proxy }
     # Hermes refuses a bind-mounted home, so this copies its state from and back to the
     # config folder around each run. Mounted, not built in: script edits need no rebuild.
@@ -87,3 +104,4 @@ services:
       - *git
       - ./agents/hermes/config:/home/agent/.hermes-config
       - ./agents/hermes/entrypoint.sh:/usr/local/lib/hermes-entrypoint.sh:ro
+      - *start

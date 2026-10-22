@@ -1,6 +1,6 @@
 # 8. Configurable workspace directory
 
-Status: Accepted
+Status: Accepted. The fixed `/workspace` target is superseded by [ADR 20](0020-workspace-at-host-path.md).
 
 ## Context
 A fixed `./workspace` forces users to clone their projects inside this repo, or to move existing checkouts there.

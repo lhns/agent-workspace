@@ -21,12 +21,13 @@ The first run, and any run after a `git pull` that changed a Dockerfile (or afte
 ```
 agents/base/                   shared image: OS, tools, user (uid 1000 "agent")
 agents/<harness>/              Dockerfile (only the harness install, FROM base) + its local state
+agents/start.sh                resumes or starts the agent (AGENTS_AUTORESUME)
 agents/hermes/entrypoint.sh    copies hermes state around each run (see Hermes state)
 agents/run.*                   launch logic, one file per OS; agents/harness-dirs lists state dirs
 run-<harness>.*                one-line launchers
 compose.yaml                   one service per harness
 .env.example                   template for .env
-tests/                         CI smoke test (agent starts) and run.bat test
+tests/                         CI smoke test (agent starts), start.sh test and run.bat test
 shared/                        local, gitignored: git config + credentials, AGENTS.md
 workspace/                     default workspace
 docs/adr/                      design decisions
@@ -48,6 +49,7 @@ renovate.json                  dependency updates
 - `AGENTS_LOCAL_BUILD`: non-empty (e.g. `1`) always builds the image locally instead of pulling it.
 - `AGENTS_IMAGE_PREFIX`: where prebuilt images are pulled from, default `ghcr.io/lhns/agent-workspace`; set it for a fork or mirror.
 - `AGENTS_WORKSPACE_CONSISTENCY`: mount consistency options for the workspace, passed to Docker as is (e.g. for remote Docker with caching mounts). Empty means Docker's default.
+- `AGENTS_AUTORESUME`: `ask` (default, also when empty) offers to resume the last conversation for the workspace folder with an arrow-key menu, `yes` resumes without asking, `no` always starts fresh (any case). It only applies when the harness has a conversation for this folder, and arguments to the launcher (`./run-claude.sh claude`) start fresh. The workspace is mounted at its host path (`C:\code\foo` becomes `/c/code/foo`) so conversations are kept per folder; use `/clear`, `/new` or the harness's own picker (`claude --resume`, `pi --resume`, `hermes sessions browse`, `cline history`) for older ones. Conversations from before this change were stored under `/workspace` and don't resume.
 - `compose.override.yaml`: your own compose tweaks (extra mounts, ports). Gitignored, merged automatically.
 
 ## Git

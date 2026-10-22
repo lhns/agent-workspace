@@ -22,6 +22,17 @@ elif [ ! -d "$ws" ]; then
     echo "WORKSPACE_DIR '$ws' does not exist" >&2; exit 1
 fi
 
+# The workspace is mounted at its host path, so harnesses that key sessions by directory keep
+# them per host folder. Paths that would hide the container's own directories fall back to /workspace.
+target=$(cd "${ws:-workspace}" && pwd -P)
+case $target in
+    / | /home | /home/agent | /home/agent/* | /usr | /usr/* | /etc | /etc/* | /bin | /bin/* | /sbin | /sbin/* \
+        | /lib* | /proc | /proc/* | /sys | /sys/* | /dev | /dev/* | /opt | /opt/* | /var | /var/*)
+        echo "Note: $target would hide a container directory; mounting the workspace at /workspace, so conversations are not kept per folder." >&2
+        target=/workspace ;;
+esac
+export AGENTS_WORKSPACE_TARGET=$target
+
 # Prebuilt images come from ghcr.io unless AGENTS_LOCAL_BUILD is non-empty.
 local_build=${AGENTS_LOCAL_BUILD:-$(envval AGENTS_LOCAL_BUILD)}
 # Prebuilt images are <prefix>-<harness>:<hash>.
