@@ -29,9 +29,9 @@ plain() { # harness, AGENTS_AUTORESUME
     AGENTS_AUTORESUME=$2 bash "$start" "$1" </dev/null 2>&1
 }
 # With a terminal and scripted keys (printf format) for the menu.
-pty() { # keys, harness
+pty() { # keys, harness, keys sent a second later
     # shellcheck disable=SC2059 # keys are printf escapes
-    { sleep 1; printf "$1"; sleep 1; } | AGENTS_AUTORESUME=ask timeout 20 script -qec "bash $start $2" /dev/null 2>&1
+    { sleep 1; printf "$1"; sleep 1; printf "${3:-}"; sleep 1; } | AGENTS_AUTORESUME=ask timeout 20 script -qec "bash $start $2" /dev/null 2>&1
 }
 UP='\033[A' DOWN='\033[B' ENTER='\n'
 
@@ -51,6 +51,8 @@ out=$(pty "$DOWN$ENTER" claude);         check "menu: Down+Enter starts fresh" "
 out=$(pty "$DOWN$UP$ENTER" claude);      check "menu: Down+Up+Enter resumes" "$out" "STUB claude --continue"
 out=$(pty "y$ENTER" claude);             check "menu: y is no shortcut, Enter resumes" "$out" "STUB claude --continue"
 check "menu: shows both items" "$out" "Start new conversation"
+out=$(pty '\033' claude "$DOWN$ENTER");   check "menu: a lone Esc does not hang or select; Down+Enter then starts fresh" "$out" "--continue" no
+out=$(pty "$DOWN" claude '\003');         check "menu: Ctrl-C starts nothing" "$out" "STUB" no ; check "menu: Ctrl-C shows the cursor again" "$out" "$(printf '\033[?25h')"
 out=$(AGENTS_AUTORESUME=yes timeout 10 script -qec "bash $start claude" /dev/null </dev/null 2>&1)
 check "yes: no menu" "$out" "Start new conversation" no
 
@@ -80,12 +82,15 @@ db "$oc" "INSERT INTO session VALUES ('d', '$work', NULL, NULL)"
 out=$(plain opencode ask);               check "opencode: session resumes" "$out" "STUB opencode --continue"
 
 cl=$HOME/.cline/data/db/sessions.db
-db "$cl" "CREATE TABLE sessions (session_id TEXT, cwd TEXT, is_subagent INTEGER, parent_session_id TEXT, started_at TEXT)" \
-    "INSERT INTO sessions VALUES ('other', '/elsewhere', 0, NULL, '2030-01-01')"
+msgs=$HOME/cline-messages
+mkdir -p "$msgs"
+echo '[{}]' > "$msgs/old.json"; echo '[{}]' > "$msgs/other.json"; echo '[{}]' > "$msgs/sub.json"; : > "$msgs/empty.json"
+db "$cl" "CREATE TABLE sessions (session_id TEXT, cwd TEXT, is_subagent INTEGER, parent_session_id TEXT, started_at TEXT, messages_path TEXT)"     "INSERT INTO sessions VALUES ('other', '/elsewhere', 0, NULL, '2030-01-01', '$msgs/other.json')"
 out=$(plain cline ask);                  check "cline: only other folder: fresh" "$out" "--id" no
-db "$cl" "INSERT INTO sessions VALUES ('old', '$work', 0, NULL, '2020-01-01')" "INSERT INTO sessions VALUES ('new', '$work', 0, NULL, '2021-01-01')" \
-    "INSERT INTO sessions VALUES ('sub', '$work', 1, NULL, '2022-01-01')"
-out=$(plain cline ask);                  check "cline: resumes the newest session of this folder" "$out" "STUB cline --id new"
+db "$cl" "INSERT INTO sessions VALUES ('empty', '$work', 0, NULL, '2019-01-01', '$msgs/empty.json')"     "INSERT INTO sessions VALUES ('nopath', '$work', 0, NULL, '2019-06-01', NULL)"     "INSERT INTO sessions VALUES ('missing', '$work', 0, NULL, '2019-07-01', '$msgs/gone.json')"
+out=$(plain cline ask);                  check "cline: sessions without messages: fresh" "$out" "--id" no
+db "$cl" "INSERT INTO sessions VALUES ('old', '$work', 0, NULL, '2020-01-01', '$msgs/old.json')"     "INSERT INTO sessions VALUES ('stub', '$work', 0, NULL, '2021-01-01', '$msgs/empty.json')"     "INSERT INTO sessions VALUES ('sub', '$work', 1, NULL, '2022-01-01', '$msgs/sub.json')"
+out=$(plain cline ask);                  check "cline: resumes the newest session of this folder that has messages" "$out" "STUB cline --id old"
 
 hm=$HOME/.hermes/state.db
 db "$hm" "CREATE TABLE sessions (source TEXT, message_count INTEGER, git_repo_root TEXT, cwd TEXT)" \

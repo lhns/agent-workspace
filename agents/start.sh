@@ -6,23 +6,24 @@
 set -u
 h=${1:?usage: agents-start.sh <harness>}
 
-# First value of a SQLite query; fails on a missing db, no match or any error.
-sql1() {
+# Rows of a SQLite query, columns tab-separated; fails on a missing db, no rows or any error.
+sql() {
     [ -f "$1" ] || return 1
     python3 - "$@" <<'PY' 2>/dev/null
 import sqlite3, sys
 db, query, *args = sys.argv[1:]
-row = sqlite3.connect("file:" + db + "?mode=ro", uri=True).execute(query, args).fetchone()
-if not row:
+rows = sqlite3.connect("file:" + db + "?mode=ro", uri=True).execute(query, args).fetchall()
+if not rows:
     sys.exit(1)
-print(row[0])
+for row in rows:
+    print("\t".join(map(str, row)))
 PY
 }
 
 # Sets `resume` (the command) when this harness has a conversation for $PWD, else returns 1.
 # A harness's own "continue" fails or falls back to another folder's session when there is none.
 find_session() {
-    local key dir id
+    local key dir id rows sid path
     case $h in
         claude)
             # Folder name with every other character replaced; Claude shortens names over
@@ -37,21 +38,27 @@ find_session() {
             compgen -G "$HOME/.pi/agent/sessions/--$key--/*" >/dev/null || return 1
             resume=(pi --continue) ;;
         opencode)
-            sql1 "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db" \
+            sql "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db" \
                 "SELECT 1 FROM session WHERE directory = ? AND parent_id IS NULL AND time_archived IS NULL" \
                 "$PWD" >/dev/null || return 1
             resume=(opencode --continue) ;;
         cline)
             # No continue flag; the session index records each session's folder.
-            id=$(sql1 "$HOME/.cline/data/db/sessions.db" \
-                "SELECT session_id FROM sessions WHERE cwd = ? AND is_subagent = 0 AND parent_session_id IS NULL ORDER BY started_at DESC" \
+            # A session counts once it has written messages (every launch adds a row).
+            rows=$(sql "$HOME/.cline/data/db/sessions.db" \
+                "SELECT session_id, messages_path FROM sessions WHERE cwd = ? AND is_subagent = 0 AND parent_session_id IS NULL AND COALESCE(messages_path, '') != '' ORDER BY started_at DESC" \
                 "$PWD") || return 1
+            id=
+            while IFS=$'\t' read -r sid path; do
+                if [ -s "$path" ]; then id=$sid; break; fi
+            done <<<"$rows"
+            [ -n "$id" ] || return 1
             resume=(cline --id "$id") ;;
         hermes)
             # Bare -c falls back to the newest session of any folder. Hermes' workspace is the
             # git root, else the folder; empty launch stubs don't count.
             dir=$(git rev-parse --show-toplevel 2>/dev/null) || dir=$PWD
-            sql1 "${HERMES_HOME:-$HOME/.hermes}/state.db" \
+            sql "${HERMES_HOME:-$HOME/.hermes}/state.db" \
                 "SELECT 1 FROM sessions WHERE source IN ('cli', 'oneshot') AND message_count > 0 AND (git_repo_root = ?1 OR (COALESCE(git_repo_root, '') = '' AND cwd = ?1))" \
                 "$dir" >/dev/null || return 1
             resume=(hermes -c) ;;

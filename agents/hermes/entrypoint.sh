@@ -74,7 +74,9 @@ selected_at_start=$(selection)
 
 # The image pins the version, so the update notice is noise. Set here, not in the image:
 # config.yaml is synced state and would overwrite an image default.
-hermes config set updates.check false >/dev/null 2>&1 || echo "Could not disable hermes' update check." >&2
+if ! grep -A3 '^updates:' "$home/config.yaml" 2>/dev/null | grep -qi 'check: false'; then
+    hermes config set updates.check false >/dev/null 2>&1 || echo "Could not disable hermes' update check." >&2
+fi
 
 # Not exec: state is saved after the command. Ctrl-C must not end this script.
 trap : INT
