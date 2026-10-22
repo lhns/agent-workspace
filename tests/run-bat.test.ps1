@@ -1,5 +1,6 @@
 # Tests agents/run.bat against a stub `docker.exe` (compiled below; a .cmd stub would end the
-# calling batch file) that logs its arguments and fails `pull` when STUB_PULL_FAIL=1. Runs on
+# calling batch file) that logs its arguments and fails `pull` when STUB_PULL_FAIL=1 and
+# `image inspect` when STUB_INSPECT_FAIL=1. Runs on
 # a temp copy of the repo, so it leaves no state behind. Needs Windows PowerShell 5.1 (Add-Type -OutputAssembly).
 $ErrorActionPreference = 'Stop'
 $src = (Resolve-Path "$PSScriptRoot\..").Path
@@ -14,17 +15,18 @@ $stub = @'
 public class P { public static void Main(string[] a) {
     System.IO.File.AppendAllText(System.Environment.GetEnvironmentVariable("STUB_LOG"), string.Join(" ", a) + "\n");
     if (a.Length > 0 && a[0] == "pull" && System.Environment.GetEnvironmentVariable("STUB_PULL_FAIL") == "1") System.Environment.Exit(1);
+    if (a.Length > 1 && a[0] == "image" && a[1] == "inspect" && System.Environment.GetEnvironmentVariable("STUB_INSPECT_FAIL") == "1") System.Environment.Exit(1);
 } }
 '@
 Add-Type -OutputType ConsoleApplication -OutputAssembly "$work\stub\docker.exe" -TypeDefinition $stub
 $env:PATH = "$work\stub;$env:PATH"
-Remove-Item Env:WORKSPACE_DIR, Env:AGENTS_LOCAL_BUILD, Env:AGENTS_IMAGE_PREFIX, Env:STUB_PULL_FAIL -ErrorAction SilentlyContinue
+Remove-Item Env:WORKSPACE_DIR, Env:AGENTS_LOCAL_BUILD, Env:AGENTS_IMAGE_PREFIX, Env:STUB_PULL_FAIL, Env:STUB_INSPECT_FAIL -ErrorAction SilentlyContinue
 $failures = 0
 $hash = (Get-FileHash -Algorithm SHA256 -InputStream ([IO.MemoryStream]::new([byte[]]([IO.File]::ReadAllBytes("$work\agents\base\Dockerfile") + [IO.File]::ReadAllBytes("$work\agents\claude\Dockerfile"))))).Hash.ToLower()
 $ref = "ghcr.io/lhns/agent-workspace-claude:$hash"
 $pulled = "pull $ref|tag $ref agent-workspace-claude|rmi $ref|compose run --rm claude bash"
 $built = 'compose build base|compose build claude|compose run --rm claude bash'
-$pullFailed = "pull $ref|$built"
+$unchanged = 'image inspect agent-workspace-claude|compose run --rm claude bash'
 
 # Runs the real launcher; stdin from NUL so the `pause` after "Edit .env first" returns.
 function Invoke-Launcher([string]$arguments) {
@@ -48,7 +50,12 @@ try {
     Check 'first run writes the same hash as sha256sum' ((Get-Content "$work\agents\claude\.build.sha256") -eq $hash)
 
     Invoke-Launcher 'bash'
-    Check 'unchanged hash: neither pull nor build' (($calls -join '|') -eq 'compose run --rm claude bash')
+    Check 'unchanged hash: neither pull nor build' (($calls -join '|') -eq $unchanged)
+
+    $env:STUB_INSPECT_FAIL = '1'
+    Invoke-Launcher 'bash'
+    Remove-Item Env:STUB_INSPECT_FAIL
+    Check 'unchanged hash but image pruned: pulls again' (($calls -join '|') -eq "image inspect agent-workspace-claude|$pulled")
 
     Add-Content "$work\agents\base\Dockerfile" '# changed'
     $env:STUB_PULL_FAIL = '1'
@@ -58,7 +65,7 @@ try {
     Check 'changed Dockerfile with failing pull builds base, then claude' (($calls -join '|') -eq "pull $newRef|$built" -and $newRef -ne $ref)
 
     Invoke-Launcher 'bash'
-    Check 'build is skipped again afterwards' (($calls -join '|') -eq 'compose run --rm claude bash')
+    Check 'build is skipped again afterwards' (($calls -join '|') -eq $unchanged)
 
     $env:AGENTS_LOCAL_BUILD = '1'
     Remove-Item "$work\agents\claude\.build.sha256"
@@ -82,6 +89,11 @@ try {
     Invoke-Launcher 'bash'
     Remove-Item Env:WORKSPACE_DIR
     Check 'missing WORKSPACE_DIR stops before docker' ($code -eq 1 -and $calls.Count -eq 0)
+
+    Remove-Item $log -ErrorAction SilentlyContinue
+    Push-Location $work
+    try { cmd /c "set HARNESS=nope& call agents\run.bat < NUL > out.txt 2>&1" } finally { Pop-Location }
+    Check 'unknown harness stops before docker' ($LASTEXITCODE -eq 1 -and -not (Test-Path $log))
 }
 finally {
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue

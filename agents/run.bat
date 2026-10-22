@@ -2,6 +2,7 @@
 rem Shared launcher, called by run-<harness>.bat with HARNESS set. Writes only gitignored paths.
 setlocal enabledelayedexpansion
 cd /d "%~dp0.."
+findstr /b /c:"%HARNESS% " agents\harness-dirs >nul 2>&1 || (echo Unknown harness '%HARNESS%' ^(see agents\harness-dirs^) & exit /b 1)
 
 rem .env: created from the example, and refused until the user has edited it.
 if not exist .env copy .env.example .env >nul
@@ -10,12 +11,9 @@ for /f "delims==" %%K in ('findstr /r /b "[A-Z_]*=" .env.example') do (
     findstr /b /c:"%%K=" .env >nul || echo Warning: %%K is missing in .env ^(see .env.example^)
 )
 
-rem Workspace: shell env wins over .env, like compose's own interpolation.
-if not defined WORKSPACE_DIR for /f "usebackq tokens=1,* delims==" %%A in (".env") do if "%%A"=="WORKSPACE_DIR" if not "%%B"=="" set "WORKSPACE_DIR=%%~B"
-rem Prebuilt images come from ghcr.io unless AGENTS_LOCAL_BUILD is non-empty (shell env wins over .env).
-if not defined AGENTS_LOCAL_BUILD for /f "usebackq tokens=1,* delims==" %%A in (".env") do if "%%A"=="AGENTS_LOCAL_BUILD" if not "%%B"=="" set "AGENTS_LOCAL_BUILD=%%~B"
-rem Prebuilt images are <prefix>-<harness>:<hash>; shell env wins over .env.
-if not defined AGENTS_IMAGE_PREFIX for /f "usebackq tokens=1,* delims==" %%A in (".env") do if "%%A"=="AGENTS_IMAGE_PREFIX" if not "%%B"=="" set "AGENTS_IMAGE_PREFIX=%%~B"
+rem Settings: a non-empty shell variable wins over .env, like compose's own interpolation.
+rem Prebuilt images come from ghcr.io unless AGENTS_LOCAL_BUILD is non-empty; they are <prefix>-<harness>:<hash>.
+for %%V in (WORKSPACE_DIR AGENTS_LOCAL_BUILD AGENTS_IMAGE_PREFIX) do if not defined %%V for /f "usebackq tokens=1,* delims==" %%A in (".env") do if "%%A"=="%%V" if not "%%B"=="" set "%%V=%%~B"
 if not defined AGENTS_IMAGE_PREFIX set "AGENTS_IMAGE_PREFIX=ghcr.io/lhns/agent-workspace"
 if defined WORKSPACE_DIR (
     if not exist "!WORKSPACE_DIR!\" (echo WORKSPACE_DIR '!WORKSPACE_DIR!' does not exist & exit /b 1)
@@ -52,7 +50,11 @@ set "HASHFILE=agents\%HARNESS%\.build.sha256"
 for /f "usebackq delims=" %%H in (`powershell -NoProfile -Command "$b = [IO.File]::ReadAllBytes('agents\base\Dockerfile') + [IO.File]::ReadAllBytes('agents\%HARNESS%\Dockerfile'); [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($b)).Replace('-', '').ToLower()"`) do set "NEW_HASH=%%H"
 set "OLD_HASH="
 if exist "%HASHFILE%" set /p OLD_HASH=<"%HASHFILE%"
-if not "%NEW_HASH%"=="%OLD_HASH%" (
+set "CHANGED="
+if not "%NEW_HASH%"=="%OLD_HASH%" set "CHANGED=1"
+rem A matching hash with the image gone (pruned) counts as changed.
+if not defined CHANGED docker image inspect agent-workspace-%HARNESS% >nul 2>&1 || set "CHANGED=1"
+if defined CHANGED (
     set "REF=%AGENTS_IMAGE_PREFIX%-%HARNESS%:%NEW_HASH%"
     set "PULLED="
     if not defined AGENTS_LOCAL_BUILD (

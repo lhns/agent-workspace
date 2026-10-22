@@ -1,7 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
-  "dependencyDashboard": true,
   "pinDigests": true,
   "prHourlyLimit": 0,
   "gitAuthor": "Renovate Bot <bot@renovateapp.com>",

@@ -1,4 +1,3 @@
-# LF everywhere (scripts and Dockerfiles run in Linux); .bat and .cmd need CRLF.
+# LF everywhere (scripts and Dockerfiles run in Linux); .bat needs CRLF.
 * text=auto eol=lf
 *.bat eol=crlf
-*.cmd eol=crlf
