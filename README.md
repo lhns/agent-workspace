@@ -40,7 +40,8 @@ docs/adr/             design decisions
 
 - `.env`: one file for all harnesses. Add API keys there or log in inside the container.
 - `WORKSPACE_DIR` in `.env`: the folder the agent works in; empty means `./workspace`. A shell variable overrides it per run: `WORKSPACE_DIR=~/code/foo ./run-claude.sh`. The folder must exist.
-- Proxy: set `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (either case) in the shell before starting a launcher, or in `.env`. They are used for image builds and passed to the agent. A proxy on the host itself is `host.docker.internal`, not `localhost`. Pulls of the prebuilt images are done by Docker itself and use Docker's proxy settings; if a pull fails, the local build uses these variables.
+- Proxy: set `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (either case; each sets both spellings) in the shell before starting a launcher, or in `.env`. They are used for image builds and passed to the agent. A proxy on the host itself is `host.docker.internal`, not `localhost`. Pulls of the prebuilt images are done by Docker itself and use Docker's proxy settings; if a pull fails, the local build uses these variables.
+- `AGENTS_WORKSPACE_CONSISTENCY`: mount consistency options for the workspace, passed to Docker as is (e.g. for remote Docker with caching mounts). Empty means Docker's default.
 - `compose.override.yaml`: your own compose tweaks (extra mounts, ports). Gitignored, merged automatically.
 
 ## Git

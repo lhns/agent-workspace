@@ -1,12 +1,21 @@
 name: agent-workspace
 
 # Mounts every harness shares; compose can't merge lists, so each service repeats these.
-x-workspace: &workspace ${WORKSPACE_DIR:-./workspace}:/workspace
+x-workspace: &workspace
+  type: bind
+  source: ${WORKSPACE_DIR:-./workspace}
+  target: /workspace
+  # Passed through for remote Docker setups with caching mounts; empty = Docker's default.
+  consistency: ${AGENTS_WORKSPACE_CONSISTENCY:-}
+  # The launchers create ./workspace and refuse a missing WORKSPACE_DIR; never create it here.
+  bind:
+    create_host_path: false
+
 # Directory mount: git rewrites config via lockfile + rename, which a single-file mount breaks.
 x-git: &git ./shared/git:/home/agent/.config/git
 
-# Proxy settings from the shell that starts the launcher (or .env), for builds and agents.
-# Both spellings are passed: apt, curl and git read lowercase, most others uppercase.
+# Proxy settings from the shell that starts the launcher, else from .env, for builds and agents.
+# Either spelling sets both: apt, curl and git read lowercase, most others uppercase.
 x-proxy: &proxy
   HTTP_PROXY: ${HTTP_PROXY:-${http_proxy:-}}
   HTTPS_PROXY: ${HTTPS_PROXY:-${https_proxy:-}}
