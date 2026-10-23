@@ -1,6 +1,6 @@
 FROM agent-workspace-base
 # renovate: datasource=npm depName=opencode-ai
-ARG OPENCODE_VERSION=1.19.3
+ARG OPENCODE_VERSION=1.19.4
 RUN npm install -g opencode-ai@${OPENCODE_VERSION}
 # The image pins the version (Renovate); an in-container update is lost on exit.
 ENV OPENCODE_DISABLE_AUTOUPDATE=1
