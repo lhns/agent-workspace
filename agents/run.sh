@@ -32,6 +32,8 @@ case $target in
         target=/workspace ;;
 esac
 export AGENTS_WORKSPACE_TARGET=$target
+# Git Bash on Windows would hand docker C:/... instead; this is a container path.
+export MSYS2_ENV_CONV_EXCL="AGENTS_WORKSPACE_TARGET${MSYS2_ENV_CONV_EXCL:+;$MSYS2_ENV_CONV_EXCL}"
 
 # Prebuilt images come from ghcr.io unless AGENTS_LOCAL_BUILD is non-empty.
 local_build=${AGENTS_LOCAL_BUILD:-$(envval AGENTS_LOCAL_BUILD)}
