@@ -91,10 +91,11 @@ if [ "$mode" != no ] && find_session; then
             hermes) pick=(hermes sessions browse) ;;
             *) pick=() ;;
         esac
+        title="$h has an earlier conversation in $PWD"
         if [ ${#pick[@]} -gt 0 ]; then
-            choose "Resume last conversation" "Choose another conversation" "Start new conversation"
+            choose "$title" "Resume last conversation" "Choose another conversation" "Start new conversation"
         else
-            choose "Resume last conversation" "Start new conversation"
+            choose "$title" "Resume last conversation" "Start new conversation"
         fi
         # The last item, new, keeps the plain command.
         case $sel in

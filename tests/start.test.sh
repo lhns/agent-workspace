@@ -55,6 +55,7 @@ out=$(pty "$UP$ENTER" claude);           check "menu: Up past the start stays on
 out=$(pty "y$ENTER" claude);             check "menu: y is no shortcut, Enter resumes" "$out" "STUB claude --continue"
 check "menu: shows the picker item" "$out" "Choose another conversation"
 check "menu: shows the new item" "$out" "Start new conversation"
+check "menu: title" "$out" "claude has an earlier conversation in /tmp/aw-start-test" ; check "menu: key hint" "$out" "Up/Down to move"
 out=$(pty '\033' claude "$DOWN$DOWN$ENTER"); check "menu: a lone Esc does not hang or select; Down+Down+Enter then starts fresh" "$out" "--continue" no
 out=$(pty "$DOWN" claude '\003');         check "menu: Ctrl-C starts nothing" "$out" "STUB" no ; check "menu: Ctrl-C shows the cursor again" "$out" "$(printf '\033[?25h')"
 out=$(AGENTS_AUTORESUME=yes timeout 10 script -qec "bash $start claude" /dev/null </dev/null 2>&1)

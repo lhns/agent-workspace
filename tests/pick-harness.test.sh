@@ -43,6 +43,7 @@ check "menu: Enter picks the last used" "$(recorded /a)" pi
 check "menu: Enter exits 0" "$rc" 0
 case $out in *"pi (last used)"*) echo "ok   menu: shows (last used)" ;; *) echo "FAIL menu: no '(last used)' in: $out" >&2; fail=1 ;; esac
 case ${out%%claude*} in *"pi (last used)"*) echo "ok   menu: last used is listed before claude" ;; *) echo "FAIL menu: order in: $out" >&2; fail=1 ;; esac
+case $out in *"Select the agent harness to run in"*"Up/Down to move"*) echo "ok   menu: title and key hint" ;; *) echo "FAIL menu: no title or hint in: $out" >&2; fail=1 ;; esac
 pty "$DOWN$ENTER" /a >/dev/null; check "menu: Down+Enter picks the next one, claude" "$(recorded /a)" claude
 check "menu: the choice is remembered for anywhere" "$(recorded '*')" claude
 printf '*\tpi\n' > "$AGENTS_STATE"

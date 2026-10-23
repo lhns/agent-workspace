@@ -33,7 +33,7 @@ if [ -t 0 ]; then
     for name in "${names[@]}"; do
         [ "$name" = "$last" ] || { order+=("$name"); labels+=("$name"); }
     done
-    choose "${labels[@]}"
+    choose "Select the agent harness to run in $key" "${labels[@]}"
     pick=${order[sel]}
 else
     # Without a terminal (CI, pipes) there is nobody to ask: the last used one.
