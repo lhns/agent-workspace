@@ -99,6 +99,7 @@ rem asking docker). The hash is also the ghcr tag, so a pull gets exactly this c
 rem image; an edited Dockerfile misses the registry and builds locally. Docker's layer cache
 rem keeps a local rebuild short.
 :ensure
+setlocal
 set "E_NAME=%~1"
 set "F1=%~2"
 set "F2=%~3"
@@ -126,8 +127,11 @@ if not defined AGENTS_LOCAL_BUILD (
 )
 if not defined PULLED (
     echo Building %E_NAME% image...
-    docker compose build base || exit /b 1
-    if not "%E_NAME%"=="base" (
+    if "%E_NAME%"=="base" (
+        docker compose build base || exit /b 1
+    ) else (
+        rem Build on the published or already local base so the layers are shared.
+        call :ensure base "agents\base\Dockerfile" || exit /b 1
         docker compose build %E_NAME% || exit /b 1
     )
 )

@@ -1,5 +1,5 @@
 # Tests agents/run.bat against a stub `docker.exe` (compiled below; a .cmd stub would end the
-# calling batch file) that logs its arguments and fails `pull` when STUB_PULL_FAIL=1 and
+# calling batch file) that logs its arguments and fails `pull` when STUB_PULL_FAIL=1 (or names failing refs) and
 # `image inspect` when STUB_INSPECT_FAIL=1; `compose run` also records AGENTS_WORKSPACE_TARGET. Runs on
 # a temp copy of the repo, so it leaves no state behind. Needs Windows PowerShell 5.1 (Add-Type -OutputAssembly).
 $ErrorActionPreference = 'Stop'
@@ -25,9 +25,18 @@ public class P { public static void Main(string[] a) {
         var code = System.Environment.GetEnvironmentVariable("STUB_PICK_CODE");
         if (!string.IsNullOrEmpty(code)) System.Environment.Exit(int.Parse(code));
     }
-    if (a.Length > 0 && a[0] == "pull" && System.Environment.GetEnvironmentVariable("STUB_PULL_FAIL") == "1") System.Environment.Exit(1);
+    if (a.Length > 0 && a[0] == "pull" && PullFails(a[1])) System.Environment.Exit(1);
     if (a.Length > 1 && a[0] == "image" && a[1] == "inspect" && System.Environment.GetEnvironmentVariable("STUB_INSPECT_FAIL") == "1") System.Environment.Exit(1);
-} }
+}
+    // STUB_PULL_FAIL: "1" fails every pull, otherwise a comma-separated list of substrings of the refs that fail.
+    static bool PullFails(string r) {
+        var f = System.Environment.GetEnvironmentVariable("STUB_PULL_FAIL");
+        if (string.IsNullOrEmpty(f)) return false;
+        if (f == "1") return true;
+        foreach (var x in f.Split(',')) if (r.Contains(x)) return true;
+        return false;
+    }
+}
 '@
 Add-Type -OutputType ConsoleApplication -OutputAssembly "$work\stub\docker.exe" -TypeDefinition $stub
 $env:PATH = "$work\stub;$env:PATH"
@@ -77,21 +86,40 @@ try {
     Invoke-Launcher 'claude bash'
     Remove-Item Env:STUB_PULL_FAIL
     $newRef = $calls[0] -replace '^pull ', ''
-    Check 'changed Dockerfile with failing pull builds base, then claude' (($calls -join '|') -eq "pull $newRef|$built" -and $newRef -ne $ref)
+    $baseRef0 = "ghcr.io/lhns/agent-workspace-base:$((Get-FileHash -Algorithm SHA256 "$work\agents\base\Dockerfile").Hash.ToLower())"
+    Check 'changed Dockerfile with failing pulls: pulls base too, builds base, then claude' (($calls -join '|') -eq "pull $newRef|pull $baseRef0|$built" -and $newRef -ne $ref)
 
     Invoke-Launcher 'claude bash'
     Check 'build is skipped again afterwards' (($calls -join '|') -eq $unchanged)
+
+    # Only the harness is missing on the registry: the pulled base is reused, base is not rebuilt.
+    Add-Content "$work\agents\claude\Dockerfile" '# changed'
+    Remove-Item "$work\agents\base\.build.sha256"
+    $env:STUB_PULL_FAIL = 'agent-workspace-claude'
+    Invoke-Launcher 'claude bash'
+    Remove-Item Env:STUB_PULL_FAIL
+    $newRef = $calls[0] -replace '^pull ', ''
+    Check 'harness pull misses, base pull works: builds the harness on the pulled base' (($calls -join '|') -eq "pull $newRef|pull $baseRef0|tag $baseRef0 agent-workspace-base|rmi $baseRef0|compose build claude|compose run --rm -T claude bash")
+
+    # Base already current locally: no pull or build of base at all.
+    Add-Content "$work\agents\claude\Dockerfile" '# changed again'
+    $env:STUB_PULL_FAIL = 'agent-workspace-claude'
+    Invoke-Launcher 'claude bash'
+    Remove-Item Env:STUB_PULL_FAIL
+    $newRef = $calls[0] -replace '^pull ', ''
+    Check 'harness pull misses, base current: builds only the harness' (($calls -join '|') -eq "pull $newRef|image inspect agent-workspace-base|compose build claude|compose run --rm -T claude bash")
+    $builtOnBase = 'image inspect agent-workspace-base|compose build claude|compose run --rm -T claude bash'
 
     $env:AGENTS_LOCAL_BUILD = '1'
     Remove-Item "$work\agents\claude\.build.sha256"
     Invoke-Launcher 'claude bash'
     Remove-Item Env:AGENTS_LOCAL_BUILD
-    Check 'AGENTS_LOCAL_BUILD in the shell builds without pulling' (($calls -join '|') -eq $built)
+    Check 'AGENTS_LOCAL_BUILD in the shell builds without pulling' (($calls -join '|') -eq $builtOnBase)
 
     Add-Content "$work\.env" 'AGENTS_LOCAL_BUILD=1'
     Remove-Item "$work\agents\claude\.build.sha256"
     Invoke-Launcher 'claude bash'
-    Check 'AGENTS_LOCAL_BUILD in .env builds without pulling' (($calls -join '|') -eq $built)
+    Check 'AGENTS_LOCAL_BUILD in .env builds without pulling' (($calls -join '|') -eq $builtOnBase)
 
     $env:AGENTS_IMAGE_PREFIX = 'registry.example/me/aw'
     Remove-Item "$work\agents\claude\.build.sha256"
