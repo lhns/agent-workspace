@@ -1,6 +1,6 @@
 # 20. Workspace mounted at its host path; resume the last conversation
 
-Status: Accepted. Supersedes the "always `/workspace`" part of [ADR 8](0008-configurable-workspace.md).
+Status: Accepted. Supersedes the "always `/workspace`" part of [ADR 8](0008-configurable-workspace.md). Launcher arguments no longer replace the command: they go to the harness after the resume arguments, and `AGENTS_AUTORESUME=pick` opens the harness's session picker (see [ADR 21](0021-one-launcher-with-harness-menu.md) and the README).
 
 ## Context
 Claude Code, pi, opencode and hermes key their sessions by working directory. With every host folder mounted at `/workspace`, all folders shared one key, so "continue the last conversation" could resume another project's. The images also pin the agent versions (ADR 17), so in-container self-updates are lost on exit and only cost time.

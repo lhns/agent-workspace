@@ -133,6 +133,12 @@ if not exist shared\git\config (
     )
 )
 
+rem --sessions needs a terminal; checked before the harness menu so it fails early.
+if "!RESUME!"=="pick" (
+    if defined NONINT (>&2 echo --sessions can't be combined with -y & exit /b 1)
+    if defined TTYFLAG (>&2 echo --sessions needs a terminal & exit /b 1)
+)
+
 rem shared\.last-harness: "<workspace><TAB><harness>" for this workspace and "*<TAB>..." for anywhere,
 rem so the menu offers the last used one first; the picker (agents\pick-harness.sh) writes the same format.
 if defined HARNESS goto remember
@@ -151,11 +157,8 @@ goto ready
 powershell -NoProfile -Command "$f = 'shared\.last-harness'; $k = $env:AGENTS_WORKSPACE_TARGET; $t = [char]9; $l = @(); if (Test-Path $f) { $l = @(Get-Content $f | Where-Object { -not $_.StartsWith($k + $t) -and -not $_.StartsWith('*' + $t) }) }; $l += $k + $t + $env:HARNESS; $l += '*' + $t + $env:HARNESS; [IO.File]::WriteAllText($f, ($l -join [char]10) + [char]10)"
 
 :ready
-if not "!RESUME!"=="pick" goto sessionsok
-if defined NONINT (>&2 echo --sessions can't be combined with -y & exit /b 1)
-if defined TTYFLAG (>&2 echo --sessions needs a terminal & exit /b 1)
-if "!HARNESS!"=="opencode" (>&2 echo opencode has no session picker at startup; use /sessions inside it & exit /b 1)
-:sessionsok
+rem --sessions also needs a harness with a picker (known now).
+if "!RESUME!"=="pick" if "!HARNESS!"=="opencode" (>&2 echo opencode has no session picker at startup; use /sessions inside it & exit /b 1)
 for /f "usebackq eol=# tokens=1,*" %%H in ("agents\harness-dirs") do if "%%H"=="%HARNESS%" for %%D in (%%I) do if not exist "agents\%HARNESS%\%%D" mkdir "agents\%HARNESS%\%%D"
 call :ensure %HARNESS% "agents\base\Dockerfile" "agents\%HARNESS%\Dockerfile" || exit /b 1
 
