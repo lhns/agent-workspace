@@ -8,11 +8,28 @@ Harnesses: `claude` (Claude Code), `opencode`, `pi`, `cline`, `hermes`. Docker w
 
 | Windows | Linux |
 |---|---|
-| `run-agent.bat [harness] [args...]` | `./run-agent.sh [harness] [args...]` |
+| `run-agent.bat [options] [harness] [harness args...]` | `./run-agent.sh [options] [harness] [harness args...]` |
 
-With a harness (`claude`, `opencode`, `pi`, `cline`, `hermes`) that agent starts. Without one, an arrow-key menu picks it (Up/Down, Enter, Ctrl-C to quit), with the harness you used last in this workspace folder first, else the last used anywhere, remembered in `shared/.last-harness`. Without a terminal and without a harness, the last used one starts. The menu runs in a container from the base image, so it looks the same on Windows and Linux; it adds about a second. Other arguments go to the agent, e.g. `./run-agent.sh claude --help`, or start a shell with `run-agent.bat claude bash`.
+With a harness (`claude`, `opencode`, `pi`, `cline`, `hermes`) that agent starts. Without one, an arrow-key menu picks it (Up/Down, Enter, Ctrl-C to quit), with the harness you used last in this workspace folder first, else the last used anywhere, remembered in `shared/.last-harness`. Without a terminal and without a harness, the last used one starts. The menu runs in a container from the base image, so it looks the same on Windows and Linux; it adds about a second. Everything after the harness goes to the agent, e.g. `./run-agent.sh claude --model sonnet`; after `--` alone the menu still picks the harness: `./run-agent.sh -- --model sonnet`. The arguments come after the launcher's own resume arguments (`claude --continue --model sonnet`).
 
-Breaking change: the per-harness launchers are gone; `run-claude.sh` is now `./run-agent.sh claude` (likewise `run-claude.bat` and the other harnesses).
+Options go before the harness (`./run-agent.sh -h` lists them):
+
+| Option | Effect |
+|---|---|
+| `--harness NAME` | the harness to run, like the positional one |
+| `--continue` | resume the last conversation for this folder, no menu |
+| `--new` | start a new conversation, no menu |
+| `--sessions` | open the harness's own session picker (not for opencode; needs a terminal) |
+| `--ask` | show the resume menu (the default) |
+| `-y`, `--non-interactive` | never show a menu: the given or last used harness, resuming a conversation if there is one unless `--new`; an error with `--sessions` |
+| `--exec CMD [ARGS...]` | run CMD in the harness container instead of the agent, e.g. a shell: `./run-agent.sh --harness claude --exec bash` |
+| `-h`, `--help` | usage |
+
+Option parsing stops at the first argument that is not an option or at `--`. An unknown option before the harness is an error; put `--` before arguments meant for the agent. The launcher does not detect the agent's own session flags: pass `--new` when you supply your own session flags, e.g. `./run-agent.sh --new claude --resume <id>`; otherwise a resume menu or `--continue` may come first.
+
+Breaking changes: the per-harness launchers are gone; `run-claude.sh` is now `./run-agent.sh claude` (likewise `run-claude.bat` and the other harnesses). Arguments after the harness now go to the agent instead of replacing its command: `run-agent claude bash` passes `bash` to claude; use `--exec` for a shell or any other command.
+
+On Windows (`run.bat`) an empty `""` argument ends the argument list, `%` in arguments is expanded by cmd, and `--harness=NAME` is not recognized (use a space).
 
 The first run creates `.env` from `.env.example` and stops until you edit it (uncomment the keys you use).
 
@@ -53,7 +70,9 @@ renovate.json                  dependency updates
 - `AGENTS_LOCAL_BUILD`: non-empty (e.g. `1`) always builds the image locally instead of pulling it.
 - `AGENTS_IMAGE_PREFIX`: where prebuilt images are pulled from, default `ghcr.io/lhns/agent-workspace`; set it for a fork or mirror.
 - `AGENTS_WORKSPACE_CONSISTENCY`: mount consistency options for the workspace, passed to Docker as is (e.g. for remote Docker with caching mounts). Empty means Docker's default.
-- `AGENTS_AUTORESUME`: `ask` (default, also when empty) offers to resume the last conversation for the workspace folder with an arrow-key menu (or to choose another one in the harness's own picker; opencode has none at startup, use `/sessions` there), `yes` resumes without asking, `no` always starts fresh (any case). It only applies when the harness has a conversation for this folder, and arguments to the launcher (`./run-agent.sh claude claude`) start fresh. The workspace is mounted at its host path (`C:\code\foo` becomes `/c/code/foo`) so conversations are kept per folder; use `/clear`, `/new` or the harness's own picker (`claude --resume`, `pi --resume`, `hermes sessions browse`, `cline history`) for older ones. Conversations from before this change were stored under `/workspace` and don't resume.
+- `AGENTS_AUTORESUME`: `ask` (default, also when empty) offers to resume the last conversation for the workspace folder with an arrow-key menu (or to choose another one in the harness's own picker; opencode has none at startup, use `/sessions` there), `yes` resumes without asking, `no` always starts fresh (any case). It only applies when the harness has a conversation for this folder, and `--new` starts fresh. `pick` (the launcher's `--sessions`) opens the harness's session picker instead. The launcher's `--continue`, `--new`, `--sessions` and `--ask` override this setting. The workspace is mounted at its host path (`C:\code\foo` becomes `/c/code/foo`) so conversations are kept per folder; use `/clear`, `/new` or the harness's own picker (`claude --resume`, `pi --resume`, `hermes sessions browse`, `cline history`) for older ones. Conversations from before this change were stored under `/workspace` and don't resume.
+- `AGENTS_HARNESS`: the harness to run when none is given on the command line (a flag or positional harness wins); with it the menu never shows. Shell beats `.env`, so it can be set system-wide.
+- `AGENTS_NONINTERACTIVE`: any non-empty value is `-y`: no menu is ever shown. Shell beats `.env`.
 - `compose.override.yaml`: your own compose tweaks (extra mounts, ports). Gitignored, merged automatically.
 
 ## Git
@@ -87,6 +106,6 @@ Hermes refuses a home folder it can't keep private, so its home (`~/.hermes`) st
 
 ## Development
 
-CI (`.github/workflows/ci.yml`) builds every image through the real launcher and checks that each agent starts; on `main` it then publishes the tested image to ghcr.io (the packages must be set public once) and checks the pull path. CI builds the base image once and the harness images on top of it, so they share its layers (checked against the registry). It also runs shellcheck/actionlint and tests `run.bat` against a stub docker. Renovate runs from a scheduled workflow and needs a `RENOVATE_TOKEN` repository secret (a personal access token, so its PRs trigger CI); see [ADR 17](docs/adr/0017-pinned-versions-renovate-ci.md) and [ADR 19](docs/adr/0019-prebuilt-images-on-ghcr.md).
+CI (`.github/workflows/ci.yml`) builds every image through the real launcher and checks that each agent starts; on `main` it then publishes the tested image to ghcr.io (the packages must be set public once) and checks the pull path. CI builds the base image once and the harness images on top of it, so they share its layers (checked against the registry). It also runs shellcheck/actionlint and tests `run.sh` and `run.bat` option handling against a stub docker. Renovate runs from a scheduled workflow and needs a `RENOVATE_TOKEN` repository secret (a personal access token, so its PRs trigger CI); see [ADR 17](docs/adr/0017-pinned-versions-renovate-ci.md) and [ADR 19](docs/adr/0019-prebuilt-images-on-ghcr.md).
 
 Design decisions: [docs/adr](docs/adr/).

@@ -36,6 +36,18 @@ printf '/a\tgone\n*\tnope\n' > "$AGENTS_STATE"
 plain /a >/dev/null; rc=$?
 check "no terminal: a recorded harness that no longer exists exits 2" "$rc" 2
 
+# AGENTS_NONINTERACTIVE counts as no terminal, even with one.
+printf '/a	pi
+*	pi
+' > "$AGENTS_STATE"
+out=$(AGENTS_NONINTERACTIVE=1 pty "$DOWN$ENTER" /a); rc=$?
+check "non-interactive with a terminal: takes the recorded harness, exit code" "$rc" 0
+check "non-interactive with a terminal: choice" "$(recorded /a)" pi
+case $out in *"Up/Down to move"*) echo "FAIL non-interactive: menu shown in: $out" >&2; fail=1 ;; *) echo "ok   non-interactive: no menu" ;; esac
+rm -f "$AGENTS_STATE"
+AGENTS_NONINTERACTIVE=1 pty "$ENTER" /a >/dev/null; rc=$?
+check "non-interactive with a terminal and nothing recorded: exit code" "$rc" 2
+
 # Menu: the last used one is first and marked; the rest follow in harness-dirs order.
 printf '/a\tpi\n*\tpi\n' > "$AGENTS_STATE"
 out=$(pty "$ENTER" /a); rc=$?

@@ -19,7 +19,8 @@ choose() {
 '
     }
     trap 'printf "\e[?25h" >"$out"; exit 130' INT
-    { printf '\e[?25l\e[1m%s\e[0m\e[K
+    # Clear the screen first (not the scrollback), so pull progress and the like don't linger above.
+    { printf '\e[H\e[2J\e[?25l\e[1m%s\e[0m\e[K
 ' "$title"; draw; } >"$out"
     while IFS= read -rsn1 key; do
         if [ "$key" = $'\e' ]; then

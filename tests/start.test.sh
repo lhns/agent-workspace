@@ -1,6 +1,6 @@
 #!/bin/bash
 # Tests agents/start.sh inside a harness container (see .github/workflows/ci.yml):
-#   ./run-agent.sh claude bash -c "$(cat tests/start.test.sh)" start-test
+#   ./run-agent.sh --harness claude --exec bash -c "$(cat tests/start.test.sh)" start-test
 # The harness binaries are stubs that print their arguments; HOME is a scratch directory.
 set -u
 start=${START:-/usr/local/lib/agents-start.sh}
@@ -44,7 +44,29 @@ out=$(plain claude ask);  check "claude: session, ask, no terminal resumes" "$ou
 out=$(plain claude YES);  check "claude: yes (upper case) resumes" "$out" "STUB claude --continue"
 out=$(plain claude no);   check "claude: no starts fresh" "$out" "--continue" no
 out=$(plain claude NO);   check "claude: NO starts fresh" "$out" "--continue" no
-out=$(plain claude maybe); check "unknown value warns" "$out" "is not ask, yes or no"; check "unknown value asks, so resumes without terminal" "$out" "STUB claude --continue"
+out=$(plain claude maybe); check "unknown value warns" "$out" "is not ask, yes, no or pick"; check "unknown value asks, so resumes without terminal" "$out" "STUB claude --continue"
+
+# Arguments for the harness come after the resume (or picker) arguments.
+withargs() { # harness, AGENTS_AUTORESUME, harness args...
+    local h=$1 m=$2
+    shift 2
+    AGENTS_AUTORESUME=$m bash "$start" "$h" "$@" </dev/null 2>&1
+}
+out=$(withargs claude yes --model x);    check "args: after the resume arguments" "$out" "STUB claude --continue --model x"
+out=$(withargs claude ask --model x);    check "args: ask without a terminal resumes, then the args" "$out" "STUB claude --continue --model x"
+out=$(withargs claude no --model x "a b");  check "args: new conversation, args only" "$out" "STUB claude --model x a b" ; check "args: new conversation, no --continue" "$out" "--continue" no
+out=$(AGENTS_AUTORESUME=ask AGENTS_NONINTERACTIVE=1 timeout 10 script -qec "bash $start claude --model x" /dev/null 2>&1)
+check "non-interactive with a terminal resumes without a menu" "$out" "STUB claude --continue --model x" ; check "non-interactive: no menu" "$out" "Start new conversation" no
+out=$(AGENTS_AUTORESUME=pick timeout 10 script -qec "bash $start claude --model x" /dev/null 2>&1)
+check "pick: the harness's own session picker, then the args" "$out" "STUB claude --resume --model x"
+out=$(AGENTS_AUTORESUME=pick timeout 10 script -qec "bash $start hermes" /dev/null 2>&1)
+check "pick: hermes" "$out" "STUB hermes sessions browse"
+out=$(withargs claude pick)
+check "pick without a terminal is an error" "$out" "--sessions needs a terminal" ; check "pick without a terminal starts nothing" "$out" "STUB" no
+out=$(AGENTS_NONINTERACTIVE=1 AGENTS_AUTORESUME=pick timeout 10 script -qec "bash $start claude" /dev/null 2>&1)
+check "pick with non-interactive is an error" "$out" "can't be combined with -y"
+out=$(AGENTS_AUTORESUME=pick timeout 10 script -qec "bash $start opencode" /dev/null 2>&1)
+check "pick for opencode is an error" "$out" "no session picker" ; check "pick for opencode starts nothing" "$out" "STUB" no
 
 out=$(pty "$ENTER" claude);              check "menu: Enter resumes" "$out" "STUB claude --continue"
 out=$(pty "$DOWN$ENTER" claude);         check "menu: Down+Enter opens the picker" "$out" "STUB claude --resume"
@@ -56,6 +78,7 @@ out=$(pty "y$ENTER" claude);             check "menu: y is no shortcut, Enter re
 check "menu: shows the picker item" "$out" "Choose another conversation"
 check "menu: shows the new item" "$out" "Start new conversation"
 check "menu: title" "$out" "claude has an earlier conversation in /tmp/aw-start-test" ; check "menu: key hint" "$out" "Up/Down to move"
+check "menu: clears the screen first" "$out" "$(printf '[H[2J')"
 out=$(pty '\033' claude "$DOWN$DOWN$ENTER"); check "menu: a lone Esc does not hang or select; Down+Down+Enter then starts fresh" "$out" "--continue" no
 out=$(pty "$DOWN" claude '\003');         check "menu: Ctrl-C starts nothing" "$out" "STUB" no ; check "menu: Ctrl-C shows the cursor again" "$out" "$(printf '\033[?25h')"
 out=$(AGENTS_AUTORESUME=yes timeout 10 script -qec "bash $start claude" /dev/null </dev/null 2>&1)

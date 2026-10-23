@@ -38,6 +38,7 @@ x-harness: &harness
   environment:
     # Shell value wins over .env; read by agents/start.sh.
     AGENTS_AUTORESUME: ${AGENTS_AUTORESUME:-}
+    AGENTS_NONINTERACTIVE: ${AGENTS_NONINTERACTIVE:-}
     <<: *proxy
     # Node's built-in fetch ignores the proxy variables unless this is set.
     NODE_USE_ENV_PROXY: "1"
@@ -54,6 +55,7 @@ services:
     command: [bash, /opt/agents/pick-harness.sh]
     environment:
       AGENTS_WORKSPACE_TARGET: ${AGENTS_WORKSPACE_TARGET:-/workspace}
+      AGENTS_NONINTERACTIVE: ${AGENTS_NONINTERACTIVE:-}
     volumes:
       - ./agents:/opt/agents:ro
       - ./shared:/opt/shared
