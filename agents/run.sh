@@ -83,8 +83,13 @@ ensure_image() {
     fi
     if [ -z "$pulled" ]; then
         echo "Building $name image..."
-        docker compose build base
-        [ "$name" = base ] || docker compose build "$name"
+        if [ "$name" = base ]; then
+            docker compose build base
+        else
+            # Build on the published (or already local) base so the layers are shared.
+            ensure_image base agents/base/Dockerfile
+            docker compose build "$name"
+        fi
     fi
     echo "$new" > "$hashfile"
 }

@@ -15,10 +15,67 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # The base image is built and published once; every harness image is built on that exact image
+  # (see the image job), so all of them share its layers. A published base is never rebuilt:
+  # published harness images depend on its exact layers.
+  base:
+    name: Build, publish (base)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Forks publish to and test their own registry.
+      - name: Image prefix and base tag
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          echo "AGENTS_IMAGE_PREFIX=ghcr.io/${OWNER,,}/agent-workspace" >> "$GITHUB_ENV"
+          echo "BASE_HASH=$(sha256sum agents/base/Dockerfile | cut -d' ' -f1)" >> "$GITHUB_ENV"
+
+      # Logged in for the existence check too, so a private package can't look missing and get rebuilt.
+      - name: Check for a published base (main)
+        if: github.ref == 'refs/heads/main'
+        id: published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+          if docker manifest inspect "$AGENTS_IMAGE_PREFIX-base:$BASE_HASH" > /dev/null 2>&1; then
+            echo "$AGENTS_IMAGE_PREFIX-base:$BASE_HASH already exists"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # compose needs a .env that differs from the example, like the launcher does.
+      - name: Create .env
+        if: steps.published.outputs.exists != 'true'
+        run: |
+          cp .env.example .env
+          echo "# ci" >> .env
+
+      - name: Build base image
+        if: steps.published.outputs.exists != 'true'
+        run: docker compose build base
+
+      - name: Publish base image to ghcr.io
+        if: github.ref == 'refs/heads/main' && steps.published.outputs.exists != 'true'
+        run: |
+          docker tag agent-workspace-base "$AGENTS_IMAGE_PREFIX-base:$BASE_HASH"
+          docker push "$AGENTS_IMAGE_PREFIX-base:$BASE_HASH"
+
+      - name: Log out of ghcr.io
+        if: always() && github.ref == 'refs/heads/main'
+        run: docker logout ghcr.io
+
   # Runs the real Linux launcher per harness: it builds the image, then the agent must start.
   # On main the tested image is published to ghcr.io and the launcher's pull path is checked.
   image:
     name: Build, test, publish (${{ matrix.harness }})
+    needs: base
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -31,6 +88,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Forks publish to and test their own registry. Harmless while AGENTS_LOCAL_BUILD is set.
+      - name: Image prefix
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: echo "AGENTS_IMAGE_PREFIX=ghcr.io/${OWNER,,}/agent-workspace" >> "$GITHUB_ENV"
+
       - name: Free disk space (hermes image is ~3 GB)
         if: matrix.harness == 'hermes'
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
@@ -40,6 +103,18 @@ jobs:
         run: |
           cp .env.example .env
           echo "# ci" >> .env
+
+      # The base job published it. With it current, the launcher skips base and builds only the harness on top.
+      # On PRs nothing is published, so the launcher builds base itself.
+      - name: Use the published base (main)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          hash=$(sha256sum agents/base/Dockerfile | cut -d' ' -f1)
+          ref="$AGENTS_IMAGE_PREFIX-base:$hash"
+          docker pull "$ref"
+          docker tag "$ref" agent-workspace-base
+          docker rmi "$ref"
+          echo "$hash" > agents/base/.build.sha256
 
       # Runner uid is 1001, the container's is 1000: umask 000 makes the launcher's state dirs writable.
       - name: First launch builds the image and the agent starts
@@ -53,6 +128,14 @@ jobs:
           # Every state dir listed for the harness must have been created by the launcher.
           sed -n "s/^${{ matrix.harness }} //p" agents/harness-dirs | tr ' ' '\n' |
             while read -r d; do test -d "agents/${{ matrix.harness }}/$d" || exit 1; done
+
+      # The harness image must be built on the base image: the base's layers are the first ones of the harness's.
+      - name: Harness image shares the base layers
+        run: |
+          base=$(docker image inspect --format '{{json .RootFS.Layers}}' agent-workspace-base)
+          harness=$(docker image inspect --format '{{json .RootFS.Layers}}' agent-workspace-${{ matrix.harness }})
+          jq -e -n --argjson b "$base" --argjson h "$harness" '$h[:($b | length)] == $b' > /dev/null ||
+            { echo "base layers are not a prefix of the ${{ matrix.harness }} layers"; exit 1; }
 
       # start.sh is mounted into every image and tested against stub harnesses, so one image is enough.
       - name: Start script resumes and asks as designed
@@ -84,29 +167,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_ACTOR: ${{ github.actor }}
-          OWNER: ${{ github.repository_owner }}
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
-          # Also the launcher's AGENTS_IMAGE_PREFIX in the next step, so forks test their own registry.
-          prefix="ghcr.io/${OWNER,,}/agent-workspace"
-          echo "AGENTS_IMAGE_PREFIX=$prefix" >> "$GITHUB_ENV"
-          ref="$prefix-${{ matrix.harness }}:$(cat agents/${{ matrix.harness }}/.build.sha256)"
+          ref="$AGENTS_IMAGE_PREFIX-${{ matrix.harness }}:$(cat agents/${{ matrix.harness }}/.build.sha256)"
           if docker manifest inspect "$ref" > /dev/null 2>&1; then
             echo "$ref already exists"
           else
             docker tag agent-workspace-${{ matrix.harness }} "$ref"
-            docker push "$ref"
-          fi
-
-      # The base image (menu container) is built in every leg; one publishes it. Same hash scheme as the harness images.
-      - name: Publish base image to ghcr.io
-        if: github.ref == 'refs/heads/main' && matrix.harness == 'claude'
-        run: |
-          ref="$AGENTS_IMAGE_PREFIX-base:$(sha256sum agents/base/Dockerfile | cut -d' ' -f1)"
-          if docker manifest inspect "$ref" > /dev/null 2>&1; then
-            echo "$ref already exists"
-          else
-            docker tag agent-workspace-base "$ref"
             docker push "$ref"
           fi
 
@@ -123,6 +190,28 @@ jobs:
           grep -q '^Pulling ${{ matrix.harness }} image' pull.log
           grep -q '^launched$' pull.log
           if grep -q '^Building' pull.log; then echo "unexpected rebuild"; exit 1; fi
+
+      # What users download is the compressed layers in the pushed manifests, not the local layer ids checked above:
+      # the base's layer digests must be the first ones of the harness's. If this fails while the local check passes,
+      # the push recompressed the layers. Logged out, so it reads anonymously like a user's pull.
+      - name: Published harness shares the published base's layers
+        if: github.ref == 'refs/heads/main'
+        run: |
+          layers() {
+            local ref=$1 raw
+            raw=$(docker buildx imagetools inspect --raw "$ref")
+            # A multi-manifest index: follow its first image.
+            if [ "$(jq 'has("manifests")' <<< "$raw")" = true ]; then
+              raw=$(docker buildx imagetools inspect --raw "${ref%:*}@$(jq -r '.manifests[0].digest' <<< "$raw")")
+            fi
+            jq -c '[.layers[].digest]' <<< "$raw"
+          }
+          base=$(layers "$AGENTS_IMAGE_PREFIX-base:$(cat agents/base/.build.sha256)")
+          harness=$(layers "$AGENTS_IMAGE_PREFIX-${{ matrix.harness }}:$(cat agents/${{ matrix.harness }}/.build.sha256)")
+          echo "base:    $base"
+          echo "harness: $harness"
+          jq -e -n --argjson b "$base" --argjson h "$harness" '($b | length) > 0 and $h[:($b | length)] == $b' > /dev/null ||
+            { echo "published base layers are not a prefix of the published ${{ matrix.harness }} layers"; exit 1; }
 
       # Without a harness argument the launcher ensures the base image, then runs the picker; no terminal here,
       # so the picker takes the harness the launches above recorded (claude).
