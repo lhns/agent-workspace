@@ -1,6 +1,6 @@
 # 13. Windows and Linux launchers sharing one script per OS
 
-Status: Accepted
+Status: Accepted. The per-harness root wrappers are superseded by [ADR 21](0021-one-launcher-with-harness-menu.md).
 
 ## Context
 Users run this on Windows and Linux hosts. The old per-repo `.bat` files were copies of each other, and Linux had no launcher.

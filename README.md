@@ -8,13 +8,15 @@ Harnesses: `claude` (Claude Code), `opencode`, `pi`, `cline`, `hermes`. Docker w
 
 | Windows | Linux |
 |---|---|
-| `run-claude.bat` | `./run-claude.sh` |
+| `run-agent.bat [harness] [args...]` | `./run-agent.sh [harness] [args...]` |
 
-Same for `opencode`, `pi`, `cline`, `hermes`. Extra arguments go to the agent, or start a shell with `run-claude.bat bash`.
+With a harness (`claude`, `opencode`, `pi`, `cline`, `hermes`) that agent starts. Without one, an arrow-key menu picks it (Up/Down, Enter, Ctrl-C to quit), with the harness you used last in this workspace folder first, else the last used anywhere, remembered in `shared/.last-harness`. Without a terminal and without a harness, the last used one starts. The menu runs in a container from the base image, so it looks the same on Windows and Linux; it adds about a second. Other arguments go to the agent, e.g. `./run-agent.sh claude --help`, or start a shell with `run-agent.bat claude bash`.
+
+Breaking change: the per-harness launchers are gone; `run-claude.sh` is now `./run-agent.sh claude` (likewise `run-claude.bat` and the other harnesses).
 
 The first run creates `.env` from `.env.example` and stops until you edit it (uncomment the keys you use).
 
-The first run, and any run after a `git pull` that changed a Dockerfile (or after the image was pruned), pulls the matching prebuilt image from ghcr.io, tagged with a hash of the Dockerfiles (kept in `agents/<harness>/.build.sha256`; delete it to redo this). If there is none (edited Dockerfile, non-amd64 machine, offline), it builds locally instead.
+The first run, and any run after a `git pull` that changed a Dockerfile (or after the image was pruned), pulls the matching prebuilt image from ghcr.io, tagged with a hash of the Dockerfiles (kept in `agents/<harness>/.build.sha256`; delete it to redo this). The base image (`agents/base/.build.sha256`) is pulled the same way before the menu, which is the only time it is used on its own. If there is none (edited Dockerfile, non-amd64 machine, offline), it builds locally instead.
 
 ## Layout
 
@@ -22,12 +24,14 @@ The first run, and any run after a `git pull` that changed a Dockerfile (or afte
 agents/base/                   shared image: OS, tools, user (uid 1000 "agent")
 agents/<harness>/              Dockerfile (only the harness install, FROM base) + its local state
 agents/start.sh                resumes or starts the agent (AGENTS_AUTORESUME)
+agents/menu.sh                 arrow-key menu, used by start.sh and pick-harness.sh
+agents/pick-harness.sh         harness menu, run in the base image when no harness is given
 agents/hermes/entrypoint.sh    copies hermes state around each run (see Hermes state)
 agents/run.*                   launch logic, one file per OS; agents/harness-dirs lists state dirs
-run-<harness>.*                one-line launchers
+run-agent.*                    one-line launchers
 compose.yaml                   one service per harness
 .env.example                   template for .env
-tests/                         CI smoke test (agent starts), start.sh test and run.bat test
+tests/                         CI smoke test (agent starts), start.sh, pick-harness.sh and run.bat tests
 shared/                        local, gitignored: git config + credentials, AGENTS.md
 workspace/                     default workspace
 docs/adr/                      design decisions
@@ -44,12 +48,12 @@ renovate.json                  dependency updates
 ## Settings
 
 - `.env`: one file for all harnesses. A non-empty shell variable overrides the same name in `.env`. Add API keys there or log in inside the container.
-- `WORKSPACE_DIR` in `.env`: the folder the agent works in; empty means `./workspace`. A shell variable overrides it per run: `WORKSPACE_DIR=~/code/foo ./run-claude.sh`. The folder must exist.
+- `WORKSPACE_DIR` in `.env`: the folder the agent works in; empty means `./workspace`. A shell variable overrides it per run: `WORKSPACE_DIR=~/code/foo ./run-agent.sh claude`. The folder must exist.
 - Proxy: set `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (either case; each sets both spellings) in the shell before starting a launcher, or in `.env`. They are used for image builds and passed to the agent. A proxy on the host itself is `host.docker.internal`, not `localhost`. Pulls of the prebuilt images are done by Docker itself and use Docker's proxy settings; if a pull fails, the local build uses these variables.
 - `AGENTS_LOCAL_BUILD`: non-empty (e.g. `1`) always builds the image locally instead of pulling it.
 - `AGENTS_IMAGE_PREFIX`: where prebuilt images are pulled from, default `ghcr.io/lhns/agent-workspace`; set it for a fork or mirror.
 - `AGENTS_WORKSPACE_CONSISTENCY`: mount consistency options for the workspace, passed to Docker as is (e.g. for remote Docker with caching mounts). Empty means Docker's default.
-- `AGENTS_AUTORESUME`: `ask` (default, also when empty) offers to resume the last conversation for the workspace folder with an arrow-key menu (or to choose another one in the harness's own picker; opencode has none at startup, use `/sessions` there), `yes` resumes without asking, `no` always starts fresh (any case). It only applies when the harness has a conversation for this folder, and arguments to the launcher (`./run-claude.sh claude`) start fresh. The workspace is mounted at its host path (`C:\code\foo` becomes `/c/code/foo`) so conversations are kept per folder; use `/clear`, `/new` or the harness's own picker (`claude --resume`, `pi --resume`, `hermes sessions browse`, `cline history`) for older ones. Conversations from before this change were stored under `/workspace` and don't resume.
+- `AGENTS_AUTORESUME`: `ask` (default, also when empty) offers to resume the last conversation for the workspace folder with an arrow-key menu (or to choose another one in the harness's own picker; opencode has none at startup, use `/sessions` there), `yes` resumes without asking, `no` always starts fresh (any case). It only applies when the harness has a conversation for this folder, and arguments to the launcher (`./run-agent.sh claude claude`) start fresh. The workspace is mounted at its host path (`C:\code\foo` becomes `/c/code/foo`) so conversations are kept per folder; use `/clear`, `/new` or the harness's own picker (`claude --resume`, `pi --resume`, `hermes sessions browse`, `cline history`) for older ones. Conversations from before this change were stored under `/workspace` and don't resume.
 - `compose.override.yaml`: your own compose tweaks (extra mounts, ports). Gitignored, merged automatically.
 
 ## Git

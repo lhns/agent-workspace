@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Shared launcher: agents/run.sh <harness> [args...]. Writes only gitignored paths.
+# Shared launcher: agents/run.sh [harness] [args...]. Without a harness (first argument not
+# listed in agents/harness-dirs) a menu picks one and all arguments go to it. Writes only
+# gitignored paths.
 set -eu
-h=${1:-}
 cd "$(dirname "$0")/.."
-grep -q "^$h " agents/harness-dirs 2>/dev/null || { echo "Usage: agents/run.sh <harness> [args...]; unknown harness '$h' (see agents/harness-dirs)" >&2; exit 1; }
-shift
+h=
+if [ $# -gt 0 ] && grep -q "^$1 " agents/harness-dirs 2>/dev/null; then h=$1; shift; fi
 
 # .env: created from the example, and refused until the user has edited it.
 [ -f .env ] || cp .env.example .env
@@ -37,15 +38,16 @@ export MSYS2_ENV_CONV_EXCL="AGENTS_WORKSPACE_TARGET${MSYS2_ENV_CONV_EXCL:+;$MSYS
 
 # Prebuilt images come from ghcr.io unless AGENTS_LOCAL_BUILD is non-empty.
 local_build=${AGENTS_LOCAL_BUILD:-$(envval AGENTS_LOCAL_BUILD)}
-# Prebuilt images are <prefix>-<harness>:<hash>.
+# Prebuilt images are <prefix>-<harness>:<hash>; the base image is <prefix>-base:<hash>.
 prefix=${AGENTS_IMAGE_PREFIX:-$(envval AGENTS_IMAGE_PREFIX)}
 prefix=${prefix:-ghcr.io/lhns/agent-workspace}
+
+# Without a terminal (CI, pipes) compose can't allocate a tty and fails; -T skips it.
+tty=; [ -t 0 ] || tty=-T
 
 # State dirs, so docker doesn't create them as root.
 mkdir -p shared/git
 [ -e shared/AGENTS.md ] || : > shared/AGENTS.md
-dirs=$(sed -n "s/^$h //p" agents/harness-dirs)
-for d in $dirs; do mkdir -p "agents/$h/$d"; done
 
 # Seed git config from the host once; delete shared/git/config to re-seed.
 if [ ! -e shared/git/config ]; then
@@ -55,34 +57,53 @@ if [ ! -e shared/git/config ]; then
     done
 fi
 
-# Update the image only when a Dockerfile changed since the last time (much faster than
-# asking docker). The hash is also the ghcr tag, so a pull gets exactly this checkout's
-# image; an edited Dockerfile misses the registry and builds locally. Docker's layer cache
-# keeps a local rebuild short.
-hashfile=agents/$h/.build.sha256
-new=$(cat agents/base/Dockerfile "agents/$h/Dockerfile" | sha256sum | cut -d' ' -f1)
-# A matching hash with the image gone (pruned) counts as changed.
-if [ "$new" != "$(cat "$hashfile" 2>/dev/null)" ] || ! docker image inspect "agent-workspace-$h" >/dev/null 2>&1; then
-    ref=$prefix-$h:$new
-    pulled=
+# Update an image (base or a harness) only when its Dockerfiles changed since the last time
+# (much faster than asking docker). The hash is also the ghcr tag, so a pull gets exactly this
+# checkout's image; an edited Dockerfile misses the registry and builds locally. Docker's layer
+# cache keeps a local rebuild short. Usage: ensure_image <base|harness> <Dockerfile>...
+ensure_image() {
+    local name=$1 hashfile new ref pulled=
+    shift
+    hashfile=agents/$name/.build.sha256
+    new=$(cat "$@" | sha256sum | cut -d' ' -f1)
+    # A matching hash with the image gone (pruned) counts as changed.
+    if [ "$new" = "$(cat "$hashfile" 2>/dev/null)" ] && docker image inspect "agent-workspace-$name" >/dev/null 2>&1; then
+        return
+    fi
+    ref=$prefix-$name:$new
     if [ -z "$local_build" ]; then
-        echo "Pulling $h image..."
+        echo "Pulling $name image..."
         if docker pull "$ref"; then
-            docker tag "$ref" "agent-workspace-$h"
+            docker tag "$ref" "agent-workspace-$name"
             docker rmi "$ref" >/dev/null || true
             pulled=1
         else
-            echo "No prebuilt $h image available, building locally."
+            echo "No prebuilt $name image available, building locally."
         fi
     fi
     if [ -z "$pulled" ]; then
-        echo "Building $h image..."
+        echo "Building $name image..."
         docker compose build base
-        docker compose build "$h"
+        [ "$name" = base ] || docker compose build "$name"
     fi
     echo "$new" > "$hashfile"
+}
+
+# shared/.last-harness: "<workspace><TAB><harness>" for this workspace and "*<TAB>..." for
+# anywhere, so the menu offers the last used one first; the picker writes the same format.
+state=shared/.last-harness
+if [ -z "$h" ]; then
+    ensure_image base agents/base/Dockerfile
+    docker compose run --rm ${tty:+"$tty"} base || exit $?
+    h=$(K=$target awk -F'\t' '$1 == ENVIRON["K"] { print $2; exit }' "$state" 2>/dev/null || true)
+    grep -q "^$h " agents/harness-dirs 2>/dev/null || { echo "No harness chosen" >&2; exit 1; }
+else
+    new=$({ [ -f "$state" ] && K=$target awk -F'\t' '$1 != ENVIRON["K"] && $1 != "*"' "$state"; printf '%s\t%s\n%s\t%s\n' "$target" "$h" '*' "$h"; })
+    printf '%s\n' "$new" > "$state"
 fi
 
-# Without a terminal (CI, pipes) compose can't allocate a tty and fails; -T skips it.
-tty=; [ -t 0 ] || tty=-T
+dirs=$(sed -n "s/^$h //p" agents/harness-dirs)
+for d in $dirs; do mkdir -p "agents/$h/$d"; done
+ensure_image "$h" agents/base/Dockerfile "agents/$h/Dockerfile"
+
 exec docker compose run --rm ${tty:+"$tty"} "$h" "$@"

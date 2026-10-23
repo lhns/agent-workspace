@@ -1,6 +1,6 @@
 #!/bin/bash
 # Startup smoke test, run inside the harness container (see .github/workflows/ci.yml):
-#   ./run-<h>.sh bash -c "$(cat tests/smoke.sh)" smoke <h> [expected-workspace-path]
+#   ./run-agent.sh <h> bash -c "$(cat tests/smoke.sh)" smoke <h> [expected-workspace-path]
 # No API keys are available, so a login/onboarding screen counts as started.
 set -u
 h=${1:?usage: smoke.sh <harness> [expected-workspace-path]}

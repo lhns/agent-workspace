@@ -18,6 +18,7 @@ x-git: &git ./shared/git:/home/agent/.config/git
 
 # Mounted, not built in: script edits need no rebuild. Each service's command runs it.
 x-start: &start ./agents/start.sh:/usr/local/lib/agents-start.sh:ro
+x-menu: &menu ./agents/menu.sh:/usr/local/lib/agents-menu.sh:ro
 
 # Proxy settings from the shell that starts the launcher, else from .env, for builds and agents.
 # Either spelling sets both: apt, curl and git read lowercase, most others uppercase.
@@ -42,10 +43,20 @@ x-harness: &harness
     NODE_USE_ENV_PROXY: "1"
 
 services:
-  # Harness images build FROM this one, so the run scripts build it first. Never started.
+  # Harness images build FROM this one, so the run scripts build it first. Started only by the
+  # launchers without a harness argument, to pick one: the menu script is the same bash for
+  # every OS. It writes its choice to shared/.last-harness, which the launcher reads back.
   base:
     build: { context: ./agents/base, args: *proxy }
     image: agent-workspace-base
+    stdin_open: true
+    tty: true
+    command: [bash, /opt/agents/pick-harness.sh]
+    environment:
+      AGENTS_WORKSPACE_TARGET: ${AGENTS_WORKSPACE_TARGET:-/workspace}
+    volumes:
+      - ./agents:/opt/agents:ro
+      - ./shared:/opt/shared
 
   claude:
     <<: *harness
@@ -57,6 +68,7 @@ services:
       - ./agents/claude/config:/home/agent/.claude
       - ./shared/AGENTS.md:/home/agent/.claude/CLAUDE.md
       - *start
+      - *menu
 
   opencode:
     <<: *harness
@@ -69,6 +81,7 @@ services:
       - ./agents/opencode/data:/home/agent/.local/share/opencode
       - ./shared/AGENTS.md:/home/agent/.config/opencode/AGENTS.md
       - *start
+      - *menu
 
   pi:
     <<: *harness
@@ -80,6 +93,7 @@ services:
       - ./agents/pi/config:/home/agent/.pi/agent
       - ./shared/AGENTS.md:/home/agent/.pi/agent/AGENTS.md
       - *start
+      - *menu
 
   cline:
     <<: *harness
@@ -91,6 +105,7 @@ services:
       - ./agents/cline/config:/home/agent/.cline
       - ./shared/AGENTS.md:/home/agent/.agents/AGENTS.md
       - *start
+      - *menu
 
   hermes:
     <<: *harness
@@ -105,3 +120,4 @@ services:
       - ./agents/hermes/config:/home/agent/.hermes-config
       - ./agents/hermes/entrypoint.sh:/usr/local/lib/hermes-entrypoint.sh:ro
       - *start
+      - *menu
