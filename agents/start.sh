@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Compose's command for every harness: agents-start.sh <harness>. Resumes the last conversation
 # for the current folder (the workspace is mounted at its host path, so folders differ) or
-# starts fresh, depending on AGENTS_AUTORESUME (ask, the default | yes | no). Launcher
-# arguments replace this command, so passing the harness command yourself never resumes.
+# starts fresh, depending on AGENTS_AUTORESUME (ask, the default | yes | no | pick). Further
+# arguments go to the harness after the resume or picker arguments (claude --continue --model x).
+# AGENTS_NONINTERACTIVE (non-empty) or no terminal means never ask: resume if there is a session.
 set -u
-h=${1:?usage: agents-start.sh <harness>}
+h=${1:?usage: agents-start.sh <harness> [harness args...]}
+shift
 
 # Rows of a SQLite query, columns tab-separated; fails on a missing db, no rows or any error.
 sql() {
@@ -73,28 +75,34 @@ find_session() {
 mode=$(tr '[:upper:]' '[:lower:]' <<<"${AGENTS_AUTORESUME:-}")
 case $mode in
     '' | ask) mode=ask ;;
-    yes | no) ;;
-    *) echo "AGENTS_AUTORESUME='$AGENTS_AUTORESUME' is not ask, yes or no; asking." >&2; mode=ask ;;
+    yes | no | pick) ;;
+    *) echo "AGENTS_AUTORESUME='$AGENTS_AUTORESUME' is not ask, yes, no or pick; asking." >&2; mode=ask ;;
+esac
+
+# The harness's own session picker, for older conversations; opencode has none at startup.
+case $h in
+    claude | pi) pick=("$h" --resume) ;;
+    cline) pick=(cline history) ;;
+    hermes) pick=(hermes sessions browse) ;;
+    *) pick=() ;;
 esac
 
 cmd=("$h")
 resume=()
-if [ "$mode" != no ] && find_session; then
-    # Without a terminal (CI, pipes) there is nobody to ask: resume.
-    if [ "$mode" = yes ] || ! [ -t 0 ]; then
+if [ "$mode" = pick ]; then
+    [ ${#pick[@]} -gt 0 ] || { echo "$h has no session picker at startup; use /sessions inside it." >&2; exit 1; }
+    { [ -t 0 ] && [ -z "${AGENTS_NONINTERACTIVE:-}" ]; } || { echo "--sessions needs a terminal and can't be combined with -y." >&2; exit 1; }
+    cmd=("${pick[@]}")
+elif [ "$mode" != no ] && find_session; then
+    # Without a terminal (CI, pipes) or non-interactive there is nobody to ask: resume.
+    if [ "$mode" = yes ] || ! [ -t 0 ] || [ -n "${AGENTS_NONINTERACTIVE:-}" ]; then
         cmd=("${resume[@]}")
     else
-        # The harness's own session picker, for older conversations; opencode has none at startup.
-        case $h in
-            claude | pi) pick=("$h" --resume) ;;
-            cline) pick=(cline history) ;;
-            hermes) pick=(hermes sessions browse) ;;
-            *) pick=() ;;
-        esac
+        title="$h has an earlier conversation in $PWD"
         if [ ${#pick[@]} -gt 0 ]; then
-            choose "Resume last conversation" "Choose another conversation" "Start new conversation"
+            choose "$title" "Resume last conversation" "Choose another conversation" "Start new conversation"
         else
-            choose "Resume last conversation" "Start new conversation"
+            choose "$title" "Resume last conversation" "Start new conversation"
         fi
         # The last item, new, keeps the plain command.
         case $sel in
@@ -103,4 +111,4 @@ if [ "$mode" != no ] && find_session; then
         esac
     fi
 fi
-exec "${cmd[@]}"
+exec "${cmd[@]}" ${@+"$@"}

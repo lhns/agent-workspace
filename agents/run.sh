@@ -1,11 +1,55 @@
 #!/usr/bin/env bash
-# Shared launcher: agents/run.sh [harness] [args...]. Without a harness (first argument not
-# listed in agents/harness-dirs) a menu picks one and all arguments go to it. Writes only
-# gitignored paths.
+# Shared launcher: agents/run.sh [options] [harness] [harness args...] (see usage below).
+# Writes only gitignored paths.
 set -eu
 cd "$(dirname "$0")/.."
-h=
-if [ $# -gt 0 ] && grep -q "^$1 " agents/harness-dirs 2>/dev/null; then h=$1; shift; fi
+
+usage() {
+    cat <<'USAGE'
+Usage: run-agent [options] [harness] [harness args...]
+       run-agent [options] -- [harness args...]
+
+Without a harness, a menu picks one. Everything after the harness (or after --) goes to the
+harness itself, e.g. run-agent claude --model sonnet.
+
+Options (before the harness):
+  --harness NAME           the harness to run, like the positional one (env AGENTS_HARNESS)
+  --continue               resume the last conversation for this folder, no menu
+  --new                    start a new conversation, no menu
+  --sessions               open the harness's own session picker (not for opencode)
+  --ask                    show the resume menu (the default)
+  -y, --non-interactive    never show a menu: last used harness, resume if there is a conversation
+                           (env AGENTS_NONINTERACTIVE)
+  --exec CMD [ARGS...]     run CMD in the harness container instead of the harness
+  -h, --help               this text
+USAGE
+}
+die() { echo "$*" >&2; exit 1; }
+known_harness() { grep -q "^$1 " agents/harness-dirs 2>/dev/null; }
+
+h='' hflag='' resume='' nonint='' dashdash='' exec_cmd=()
+while [ $# -gt 0 ]; do
+    case $1 in
+        -h | --help) usage; exit 0 ;;
+        --harness) [ $# -ge 2 ] || die "--harness needs a name"; h=$2; hflag=1; shift 2 ;;
+        --continue) resume=yes; shift ;;
+        --new) resume=no; shift ;;
+        --sessions) resume=pick; shift ;;
+        --ask) resume=ask; shift ;;
+        -y | --non-interactive) nonint=1; shift ;;
+        --exec) shift; [ $# -gt 0 ] || die "--exec needs a command"; exec_cmd=("$@"); set --; break ;;
+        --) dashdash=1; shift; break ;;
+        -*) die "Unknown option $1 (put -- before arguments meant for the harness)" ;;
+        *) break ;;
+    esac
+done
+# The first remaining argument is the harness, unless --harness or -- already ended the options.
+if [ -z "$hflag" ] && [ -z "$dashdash" ] && [ ${#exec_cmd[@]} -eq 0 ] && [ $# -gt 0 ]; then
+    known_harness "$1" || die "Unknown harness '$1' (put -- before arguments meant for the harness)"
+    h=$1; shift
+    if [ "${1:-}" = -- ]; then shift; fi
+fi
+hargs=("$@")
 
 # .env: created from the example, and refused until the user has edited it.
 [ -f .env ] || cp .env.example .env
@@ -16,6 +60,12 @@ done
 
 # Settings: a non-empty shell variable wins over .env, like compose's own interpolation.
 envval() { sed -n "s/^$1=//p" .env | tail -n1 | tr -d '\r"'; }
+# A flag or positional harness beats AGENTS_HARNESS; -y beats AGENTS_NONINTERACTIVE (any non-empty value).
+[ -n "$h" ] || h=${AGENTS_HARNESS:-$(envval AGENTS_HARNESS)}
+[ -z "$h" ] || known_harness "$h" || die "Unknown harness '$h'"
+nonint=${nonint:-${AGENTS_NONINTERACTIVE:-$(envval AGENTS_NONINTERACTIVE)}}
+# Exported so compose passes it to the picker and the harness.
+if [ -n "$nonint" ]; then export AGENTS_NONINTERACTIVE=1; else unset AGENTS_NONINTERACTIVE; fi
 ws=${WORKSPACE_DIR:-$(envval WORKSPACE_DIR)}
 if [ -z "$ws" ]; then
     mkdir -p workspace
@@ -99,7 +149,7 @@ ensure_image() {
 state=shared/.last-harness
 if [ -z "$h" ]; then
     ensure_image base agents/base/Dockerfile
-    docker compose run --rm ${tty:+"$tty"} base || exit $?
+    MSYS2_ARG_CONV_EXCL='*' docker compose run --rm ${tty:+"$tty"} base || exit $?
     h=$(K=$target awk -F'\t' '$1 == ENVIRON["K"] { print $2; exit }' "$state" 2>/dev/null || true)
     grep -q "^$h " agents/harness-dirs 2>/dev/null || { echo "No harness chosen" >&2; exit 1; }
 else
@@ -107,8 +157,21 @@ else
     printf '%s\n' "$new" > "$state"
 fi
 
+# --sessions needs the harness (known now) and a terminal.
+if [ "$resume" = pick ]; then
+    [ -z "$nonint" ] || die "--sessions can't be combined with -y"
+    [ -z "$tty" ] || die "--sessions needs a terminal"
+    [ "$h" != opencode ] || die "opencode has no session picker at startup; use /sessions inside it"
+fi
+
 dirs=$(sed -n "s/^$h //p" agents/harness-dirs)
 for d in $dirs; do mkdir -p "agents/$h/$d"; done
 ensure_image "$h" agents/base/Dockerfile "agents/$h/Dockerfile"
 
-exec docker compose run --rm ${tty:+"$tty"} "$h" "$@"
+# The resume mode is passed only when a flag asked for it, so AGENTS_AUTORESUME from the shell or .env still applies.
+env_args=(); [ -z "$resume" ] || env_args=(-e "AGENTS_AUTORESUME=$resume")
+# Every argument is for the container: Git Bash must not convert them (env conversion stays).
+if [ ${#exec_cmd[@]} -gt 0 ]; then
+    MSYS2_ARG_CONV_EXCL='*' exec docker compose run --rm ${tty:+"$tty"} "$h" "${exec_cmd[@]}"
+fi
+MSYS2_ARG_CONV_EXCL='*' exec docker compose run --rm ${tty:+"$tty"} ${env_args[@]+"${env_args[@]}"} "$h" bash /usr/local/lib/agents-start.sh "$h" ${hargs[@]+"${hargs[@]}"}

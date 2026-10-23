@@ -4,6 +4,7 @@
 # (exit codes are not usable: compose exits 1 on its own errors).
 # State lines are "<workspace key><TAB><harness>", one for this workspace and one "*" for anywhere,
 # so the first menu entry is the harness last used here, else the one last used anywhere.
+# AGENTS_NONINTERACTIVE (non-empty) counts as no terminal.
 # Exit: 0 chosen, 2 no terminal and nothing to default to, 130 Ctrl-C.
 set -u
 dir=${AGENTS_DIR:-/opt/agents}
@@ -27,16 +28,16 @@ recorded() {
 }
 last=$(recorded "$key") || last=$(recorded '*') || last=
 
-if [ -t 0 ]; then
+if [ -t 0 ] && [ -z "${AGENTS_NONINTERACTIVE:-}" ]; then
     order=() labels=()
     if [ -n "$last" ]; then order+=("$last") labels+=("$last (last used)"); fi
     for name in "${names[@]}"; do
         [ "$name" = "$last" ] || { order+=("$name"); labels+=("$name"); }
     done
-    choose "${labels[@]}"
+    choose "Select the agent harness to run in $key" "${labels[@]}"
     pick=${order[sel]}
 else
-    # Without a terminal (CI, pipes) there is nobody to ask: the last used one.
+    # Without a terminal (CI, pipes) or non-interactive there is nobody to ask: the last used one.
     [ -n "$last" ] || { echo "No terminal and no harness recorded; pass one: ${names[*]}" >&2; exit 2; }
     pick=$last
 fi

@@ -1,15 +1,74 @@
 @echo off
-rem Shared launcher, called by the root run-agent.bat: [harness] [args...]. Without a harness (first
-rem argument not listed in agents\harness-dirs) a menu picks one and all arguments go to it.
-rem Writes only gitignored paths.
+rem Shared launcher, called by the root run-agent.bat: [options] [harness] [harness args...]
+rem (run-agent -h lists the options). Writes only gitignored paths.
 setlocal disableDelayedExpansion
 cd /d "%~dp0.."
 
 rem Arguments are collected before delayed expansion is on, so quotes and ! survive; the last
-rem command runs with it off again.
+rem command runs with it off again. Options come first, up to the harness name or --. Known
+rem limits: an empty "" argument ends collection, %% expands, --harness=NAME is not recognized.
 set "HARNESS="
-if not "%~1"=="" for /f "usebackq eol=# tokens=1" %%H in ("agents\harness-dirs") do if "%%H"=="%~1" set "HARNESS=%%H"
-if defined HARNESS shift
+set "HFLAG="
+set "RESUME="
+set "NONINT="
+set "EXECMODE="
+set "DASHDASH="
+:opts
+if "%~1"=="" goto optsdone
+if "%~1"=="-h" goto usage
+if "%~1"=="--help" goto usage
+if "%~1"=="--harness" goto optharness
+if "%~1"=="--continue" set "RESUME=yes" & shift & goto opts
+if "%~1"=="--new" set "RESUME=no" & shift & goto opts
+if "%~1"=="--sessions" set "RESUME=pick" & shift & goto opts
+if "%~1"=="--ask" set "RESUME=ask" & shift & goto opts
+if "%~1"=="-y" set "NONINT=1" & shift & goto opts
+if "%~1"=="--non-interactive" set "NONINT=1" & shift & goto opts
+if "%~1"=="--exec" goto optexec
+if "%~1"=="--" set "DASHDASH=1" & shift & goto optsdone
+set "OPT=%~1"
+if "%OPT:~0,1%"=="-" (>&2 echo Unknown option %OPT% ^(put -- before arguments meant for the harness^) & exit /b 1)
+goto optsdone
+:optharness
+if "%~2"=="" (>&2 echo --harness needs a name & exit /b 1)
+set "HARNESS=%~2"
+set "HFLAG=1"
+shift
+shift
+goto opts
+:optexec
+shift
+if "%~1"=="" (>&2 echo --exec needs a command & exit /b 1)
+set "EXECMODE=1"
+goto collectargs
+:usage
+echo Usage: run-agent [options] [harness] [harness args...]
+echo        run-agent [options] -- [harness args...]
+echo.
+echo Without a harness, a menu picks one. Everything after the harness (or after --) goes to the
+echo harness itself, e.g. run-agent claude --model sonnet.
+echo.
+echo Options (before the harness):
+echo   --harness NAME           the harness to run, like the positional one (env AGENTS_HARNESS)
+echo   --continue               resume the last conversation for this folder, no menu
+echo   --new                    start a new conversation, no menu
+echo   --sessions               open the harness's own session picker (not for opencode)
+echo   --ask                    show the resume menu (the default)
+echo   -y, --non-interactive    never show a menu: last used harness, resume if there is a conversation
+echo                            (env AGENTS_NONINTERACTIVE)
+echo   --exec CMD [ARGS...]     run CMD in the harness container instead of the harness
+echo   -h, --help               this text
+exit /b 0
+:optsdone
+rem The first remaining argument is the harness, unless --harness or -- already ended the options.
+if defined HFLAG goto collectargs
+if defined DASHDASH goto collectargs
+if "%~1"=="" goto collectargs
+for /f "usebackq eol=# tokens=1" %%H in ("agents\harness-dirs") do if "%%H"=="%~1" set "HARNESS=%%H"
+if not defined HARNESS (>&2 echo Unknown harness %~1 ^(put -- before arguments meant for the harness^) & exit /b 1)
+shift
+if "%~1"=="--" shift
+:collectargs
 set "ARGS="
 :collect
 if "%~1"=="" goto collected
@@ -33,8 +92,14 @@ for /f "delims==" %%K in ('findstr /r /b "[A-Z_]*=" .env.example') do (
 rem Settings: a non-empty shell variable wins over .env, like compose's own interpolation.
 rem Prebuilt images come from ghcr.io unless AGENTS_LOCAL_BUILD is non-empty; they are <prefix>-<harness>:<hash>,
 rem the base image <prefix>-base:<hash>.
-for %%V in (WORKSPACE_DIR AGENTS_LOCAL_BUILD AGENTS_IMAGE_PREFIX) do if not defined %%V for /f "usebackq tokens=1,* delims==" %%A in (".env") do if "%%A"=="%%V" if not "%%B"=="" set "%%V=%%~B"
+for %%V in (WORKSPACE_DIR AGENTS_LOCAL_BUILD AGENTS_IMAGE_PREFIX AGENTS_HARNESS AGENTS_NONINTERACTIVE) do if not defined %%V for /f "usebackq tokens=1,* delims==" %%A in (".env") do if "%%A"=="%%V" if not "%%B"=="" set "%%V=%%~B"
 if not defined AGENTS_IMAGE_PREFIX set "AGENTS_IMAGE_PREFIX=ghcr.io/lhns/agent-workspace"
+rem A flag or positional harness beats AGENTS_HARNESS; -y beats AGENTS_NONINTERACTIVE (any non-empty value).
+if not defined HARNESS if defined AGENTS_HARNESS set "HARNESS=!AGENTS_HARNESS!"
+if defined HARNESS findstr /b /c:"!HARNESS! " agents\harness-dirs >nul 2>&1 || (>&2 echo Unknown harness '!HARNESS!' & exit /b 1)
+if defined AGENTS_NONINTERACTIVE set "NONINT=1"
+rem Set for compose too, which passes it to the picker and the harness.
+if defined NONINT set "AGENTS_NONINTERACTIVE=1"
 if defined WORKSPACE_DIR (
     if not exist "!WORKSPACE_DIR!\" (echo WORKSPACE_DIR '!WORKSPACE_DIR!' does not exist & exit /b 1)
 ) else (
@@ -86,10 +151,22 @@ goto ready
 powershell -NoProfile -Command "$f = 'shared\.last-harness'; $k = $env:AGENTS_WORKSPACE_TARGET; $t = [char]9; $l = @(); if (Test-Path $f) { $l = @(Get-Content $f | Where-Object { -not $_.StartsWith($k + $t) -and -not $_.StartsWith('*' + $t) }) }; $l += $k + $t + $env:HARNESS; $l += '*' + $t + $env:HARNESS; [IO.File]::WriteAllText($f, ($l -join [char]10) + [char]10)"
 
 :ready
+if not "!RESUME!"=="pick" goto sessionsok
+if defined NONINT (>&2 echo --sessions can't be combined with -y & exit /b 1)
+if defined TTYFLAG (>&2 echo --sessions needs a terminal & exit /b 1)
+if "!HARNESS!"=="opencode" (>&2 echo opencode has no session picker at startup; use /sessions inside it & exit /b 1)
+:sessionsok
 for /f "usebackq eol=# tokens=1,*" %%H in ("agents\harness-dirs") do if "%%H"=="%HARNESS%" for %%D in (%%I) do if not exist "agents\%HARNESS%\%%D" mkdir "agents\%HARNESS%\%%D"
 call :ensure %HARNESS% "agents\base\Dockerfile" "agents\%HARNESS%\Dockerfile" || exit /b 1
 
 setlocal disableDelayedExpansion
+rem The resume mode is passed only when a flag asked for it, so AGENTS_AUTORESUME from the shell or .env still applies.
+set "ENVARG="
+if defined RESUME set "ENVARG=-e AGENTS_AUTORESUME=%RESUME%"
+if defined EXECMODE goto runexec
+docker compose run --rm %TTYFLAG% %ENVARG% %HARNESS% bash /usr/local/lib/agents-start.sh %HARNESS% %ARGS%
+exit /b %errorlevel%
+:runexec
 docker compose run --rm %TTYFLAG% %HARNESS% %ARGS%
 exit /b %errorlevel%
 
