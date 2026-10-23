@@ -1,6 +1,6 @@
 #!/bin/bash
 # Tests agents/start.sh inside a harness container (see .github/workflows/ci.yml):
-#   ./run-claude.sh bash -c "$(cat tests/start.test.sh)" start-test
+#   ./run-agent.sh claude bash -c "$(cat tests/start.test.sh)" start-test
 # The harness binaries are stubs that print their arguments; HOME is a scratch directory.
 set -u
 start=${START:-/usr/local/lib/agents-start.sh}

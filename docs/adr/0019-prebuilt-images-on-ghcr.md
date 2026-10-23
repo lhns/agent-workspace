@@ -1,6 +1,6 @@
 # 19. Prebuilt images on ghcr.io, tagged by Dockerfile hash
 
-Status: Accepted. Refines [ADR 14](0014-rebuild-on-dockerfile-hash.md).
+Status: Accepted. Refines [ADR 14](0014-rebuild-on-dockerfile-hash.md). The base image is also published, see [ADR 21](0021-one-launcher-with-harness-menu.md).
 
 ## Context
 Building an image takes minutes on first use and after every Dockerfile change; hermes is about 3 GB. CI already builds and smoke-tests every image, so the same image can be handed to users.

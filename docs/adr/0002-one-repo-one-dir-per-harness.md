@@ -1,6 +1,6 @@
 # 2. One repo, one directory per harness, launchers in the root
 
-Status: Accepted
+Status: Accepted. The per-harness root launchers are superseded by [ADR 21](0021-one-launcher-with-harness-menu.md).
 
 ## Context
 Each harness used to have its own repo (`workspace-claude-cli`, `workspace-opencode`, `workspace-pi`). They were nearly identical copies, drifted apart (opencode fell behind), and each had its own workspace.

@@ -48,7 +48,7 @@ jobs:
         run: |
           umask 000
           set -o pipefail
-          ./run-${{ matrix.harness }}.sh bash -c "$(cat tests/smoke.sh)" smoke ${{ matrix.harness }} "$PWD/workspace" 2>&1 | tee first.log
+          ./run-agent.sh ${{ matrix.harness }} bash -c "$(cat tests/smoke.sh)" smoke ${{ matrix.harness }} "$PWD/workspace" 2>&1 | tee first.log
           grep -q "^Building ${{ matrix.harness }} image" first.log
           # Every state dir listed for the harness must have been created by the launcher.
           sed -n "s/^${{ matrix.harness }} //p" agents/harness-dirs | tr ' ' '\n' |
@@ -59,7 +59,14 @@ jobs:
         if: matrix.harness == 'claude'
         run: |
           umask 000
-          ./run-claude.sh bash -c "$(cat tests/start.test.sh)" start-test
+          ./run-agent.sh claude bash -c "$(cat tests/start.test.sh)" start-test
+
+      # pick-harness.sh runs from the base image (the compose base service), already built by the launch above.
+      - name: Harness picker records and chooses as designed
+        if: matrix.harness == 'claude'
+        run: |
+          umask 000
+          docker compose run --rm -T base bash -c "$(cat tests/pick-harness.test.sh)" pick-test
 
       # AGENTS_LOCAL_BUILD stays set so a missing pull can't hide a rebuild: the `^Building` check is meaningful.
       - name: Second launch does not rebuild
@@ -67,7 +74,7 @@ jobs:
           AGENTS_LOCAL_BUILD: "1"
         run: |
           set -o pipefail
-          ./run-${{ matrix.harness }}.sh bash -c 'echo launched' 2>&1 | tee second.log
+          ./run-agent.sh ${{ matrix.harness }} bash -c 'echo launched' 2>&1 | tee second.log
           grep -q '^launched$' second.log
           if grep -q '^Building' second.log; then echo "unexpected rebuild"; exit 1; fi
 
@@ -91,6 +98,18 @@ jobs:
             docker push "$ref"
           fi
 
+      # The base image (menu container) is built in every leg; one publishes it. Same hash scheme as the harness images.
+      - name: Publish base image to ghcr.io
+        if: github.ref == 'refs/heads/main' && matrix.harness == 'claude'
+        run: |
+          ref="$AGENTS_IMAGE_PREFIX-base:$(sha256sum agents/base/Dockerfile | cut -d' ' -f1)"
+          if docker manifest inspect "$ref" > /dev/null 2>&1; then
+            echo "$ref already exists"
+          else
+            docker tag agent-workspace-base "$ref"
+            docker push "$ref"
+          fi
+
       # Main only, like the publish. Logged out, so a private package fails here as it would for users.
       - name: Launch pulls the published image
         if: github.ref == 'refs/heads/main'
@@ -100,10 +119,24 @@ jobs:
           set -o pipefail
           docker rmi agent-workspace-${{ matrix.harness }}
           rm agents/${{ matrix.harness }}/.build.sha256
-          ./run-${{ matrix.harness }}.sh bash -c 'echo launched' 2>&1 | tee pull.log
+          ./run-agent.sh ${{ matrix.harness }} bash -c 'echo launched' 2>&1 | tee pull.log
           grep -q '^Pulling ${{ matrix.harness }} image' pull.log
           grep -q '^launched$' pull.log
           if grep -q '^Building' pull.log; then echo "unexpected rebuild"; exit 1; fi
+
+      # Without a harness argument the launcher ensures the base image, then runs the picker; no terminal here,
+      # so the picker takes the harness the launches above recorded (claude).
+      - name: Menu launch pulls the published base image
+        if: github.ref == 'refs/heads/main' && matrix.harness == 'claude'
+        run: |
+          umask 000
+          set -o pipefail
+          docker rmi agent-workspace-base
+          rm -f agents/base/.build.sha256
+          ./run-agent.sh bash -c 'echo launched' < /dev/null 2>&1 | tee base-pull.log
+          grep -q '^Pulling base image' base-pull.log
+          grep -q '^launched$' base-pull.log
+          if grep -q '^Building' base-pull.log; then echo "unexpected rebuild"; exit 1; fi
 
   lint:
     runs-on: ubuntu-latest
