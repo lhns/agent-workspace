@@ -15,13 +15,11 @@ choose() {
             if [ "$i" = "$sel" ]; then printf '\e[7m> %s\e[0m\e[K\n' "${items[i]}"; else printf '  %s\e[K\n' "${items[i]}"; fi
         done
         # ASCII only: the terminal on the other side of docker may not be UTF-8.
-        printf '\e[2m  Up/Down to move, Enter to select, Ctrl-C to cancel\e[0m\e[K
-'
+        printf '\e[2m  Up/Down to move, Enter to select, Ctrl-C to cancel\e[0m\e[K\n'
     }
     trap 'printf "\e[?25h" >"$out"; exit 130' INT
     # Clear the screen first (not the scrollback), so pull progress and the like don't linger above.
-    { printf '\e[H\e[2J\e[?25l\e[1m%s\e[0m\e[K
-' "$title"; draw; } >"$out"
+    { printf '\e[H\e[2J\e[?25l\e[1m%s\e[0m\e[K\n' "$title"; draw; } >"$out"
     while IFS= read -rsn1 key; do
         if [ "$key" = $'\e' ]; then
             # Arrow keys are ESC [ A/B (ESC O A/B in application mode).

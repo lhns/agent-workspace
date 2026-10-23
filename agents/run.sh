@@ -95,6 +95,12 @@ prefix=${prefix:-ghcr.io/lhns/agent-workspace}
 # Without a terminal (CI, pipes) compose can't allocate a tty and fails; -T skips it.
 tty=; [ -t 0 ] || tty=-T
 
+# --sessions needs a terminal; checked before the harness menu so it fails early.
+if [ "$resume" = pick ]; then
+    [ -z "$nonint" ] || die "--sessions can't be combined with -y"
+    [ -z "$tty" ] || die "--sessions needs a terminal"
+fi
+
 # State dirs, so docker doesn't create them as root.
 mkdir -p shared/git
 [ -e shared/AGENTS.md ] || : > shared/AGENTS.md
@@ -157,12 +163,8 @@ else
     printf '%s\n' "$new" > "$state"
 fi
 
-# --sessions needs the harness (known now) and a terminal.
-if [ "$resume" = pick ]; then
-    [ -z "$nonint" ] || die "--sessions can't be combined with -y"
-    [ -z "$tty" ] || die "--sessions needs a terminal"
-    [ "$h" != opencode ] || die "opencode has no session picker at startup; use /sessions inside it"
-fi
+# --sessions also needs a harness with a picker (known now).
+[ "$resume" != pick ] || [ "$h" != opencode ] || die "opencode has no session picker at startup; use /sessions inside it"
 
 dirs=$(sed -n "s/^$h //p" agents/harness-dirs)
 for d in $dirs; do mkdir -p "agents/$h/$d"; done

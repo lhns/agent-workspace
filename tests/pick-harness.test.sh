@@ -37,9 +37,7 @@ plain /a >/dev/null; rc=$?
 check "no terminal: a recorded harness that no longer exists exits 2" "$rc" 2
 
 # AGENTS_NONINTERACTIVE counts as no terminal, even with one.
-printf '/a	pi
-*	pi
-' > "$AGENTS_STATE"
+printf '/a\tpi\n*\tpi\n' > "$AGENTS_STATE"
 out=$(AGENTS_NONINTERACTIVE=1 pty "$DOWN$ENTER" /a); rc=$?
 check "non-interactive with a terminal: takes the recorded harness, exit code" "$rc" 0
 check "non-interactive with a terminal: choice" "$(recorded /a)" pi
