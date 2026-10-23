@@ -48,11 +48,18 @@ jobs:
         run: |
           umask 000
           set -o pipefail
-          ./run-${{ matrix.harness }}.sh bash -c "$(cat tests/smoke.sh)" smoke ${{ matrix.harness }} 2>&1 | tee first.log
+          ./run-${{ matrix.harness }}.sh bash -c "$(cat tests/smoke.sh)" smoke ${{ matrix.harness }} "$PWD/workspace" 2>&1 | tee first.log
           grep -q "^Building ${{ matrix.harness }} image" first.log
           # Every state dir listed for the harness must have been created by the launcher.
           sed -n "s/^${{ matrix.harness }} //p" agents/harness-dirs | tr ' ' '\n' |
             while read -r d; do test -d "agents/${{ matrix.harness }}/$d" || exit 1; done
+
+      # start.sh is mounted into every image and tested against stub harnesses, so one image is enough.
+      - name: Start script resumes and asks as designed
+        if: matrix.harness == 'claude'
+        run: |
+          umask 000
+          ./run-claude.sh bash -c "$(cat tests/start.test.sh)" start-test
 
       # AGENTS_LOCAL_BUILD stays set so a missing pull can't hide a rebuild: the `^Building` check is meaningful.
       - name: Second launch does not rebuild

@@ -1,6 +1,6 @@
 # Tests agents/run.bat against a stub `docker.exe` (compiled below; a .cmd stub would end the
 # calling batch file) that logs its arguments and fails `pull` when STUB_PULL_FAIL=1 and
-# `image inspect` when STUB_INSPECT_FAIL=1. Runs on
+# `image inspect` when STUB_INSPECT_FAIL=1; `compose run` also records AGENTS_WORKSPACE_TARGET. Runs on
 # a temp copy of the repo, so it leaves no state behind. Needs Windows PowerShell 5.1 (Add-Type -OutputAssembly).
 $ErrorActionPreference = 'Stop'
 $src = (Resolve-Path "$PSScriptRoot\..").Path
@@ -14,6 +14,7 @@ New-Item -ItemType Directory "$work\stub" | Out-Null
 $stub = @'
 public class P { public static void Main(string[] a) {
     System.IO.File.AppendAllText(System.Environment.GetEnvironmentVariable("STUB_LOG"), string.Join(" ", a) + "\n");
+    if (a.Length > 1 && a[0] == "compose" && a[1] == "run") System.IO.File.AppendAllText(System.Environment.GetEnvironmentVariable("STUB_LOG") + ".target", System.Environment.GetEnvironmentVariable("AGENTS_WORKSPACE_TARGET") + "\n");
     if (a.Length > 0 && a[0] == "pull" && System.Environment.GetEnvironmentVariable("STUB_PULL_FAIL") == "1") System.Environment.Exit(1);
     if (a.Length > 1 && a[0] == "image" && a[1] == "inspect" && System.Environment.GetEnvironmentVariable("STUB_INSPECT_FAIL") == "1") System.Environment.Exit(1);
 } }
@@ -35,7 +36,11 @@ function Invoke-Launcher([string]$arguments) {
     try { cmd /c ".\run-claude.bat $arguments < NUL > out.txt 2>&1" } finally { Pop-Location }
     $script:code = $LASTEXITCODE
     $script:calls = if (Test-Path $log) { @(Get-Content $log) } else { @() }
+    $script:target = if (Test-Path "$log.target") { @(Get-Content "$log.target")[-1] } else { $null }
+    Remove-Item "$log.target" -ErrorAction SilentlyContinue
 }
+# C:\a\b -> /c/a/b, where the launcher mounts the workspace.
+function ConvertTo-Mount([string]$path) { '/' + $path.Substring(0, 1).ToLower() + $path.Substring(2).Replace('\', '/') }
 function Check([string]$name, [bool]$ok) {
     if ($ok) { Write-Host "ok   $name" } else { Write-Host "FAIL $name"; $script:failures++ }
 }
@@ -89,6 +94,29 @@ try {
     Invoke-Launcher 'bash'
     Remove-Item Env:WORKSPACE_DIR
     Check 'missing WORKSPACE_DIR stops before docker' ($code -eq 1 -and $calls.Count -eq 0)
+
+    Invoke-Launcher 'bash'
+    Check 'default workspace is mounted at its mirrored host path' ($target -eq (ConvertTo-Mount "$work\workspace"))
+
+    New-Item -ItemType Directory "$work\my proj" | Out-Null
+    $env:WORKSPACE_DIR = "$work\my proj"
+    Invoke-Launcher 'bash'
+    Remove-Item Env:WORKSPACE_DIR
+    Check 'WORKSPACE_DIR with a space is mounted at its mirrored host path' ($target -eq (ConvertTo-Mount "$work\my proj"))
+
+    $env:WORKSPACE_DIR = 'workspace'
+    Invoke-Launcher 'bash'
+    Remove-Item Env:WORKSPACE_DIR
+    Check 'relative WORKSPACE_DIR resolves against the repo' ($target -eq (ConvertTo-Mount "$work\workspace"))
+
+    # A path without a drive letter (UNC) can't be mirrored; skipped where the admin share is unavailable.
+    $unc = '\\localhost\' + $work.Substring(0, 1) + '$' + $work.Substring(2)
+    if (Test-Path $unc) {
+        $env:WORKSPACE_DIR = $unc
+        Invoke-Launcher 'bash'
+        Remove-Item Env:WORKSPACE_DIR
+        Check 'UNC WORKSPACE_DIR falls back to /workspace' ($target -eq '/workspace')
+    }
 
     Remove-Item $log -ErrorAction SilentlyContinue
     Push-Location $work

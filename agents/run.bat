@@ -21,6 +21,13 @@ if defined WORKSPACE_DIR (
     if not exist workspace mkdir workspace
 )
 
+rem The workspace is mounted at its host path (C:\code\foo becomes /c/code/foo), so harnesses that key
+rem sessions by directory keep them per host folder. A path with no drive letter falls back to /workspace.
+set "WS=workspace"
+if defined WORKSPACE_DIR set "WS=!WORKSPACE_DIR!"
+for %%I in ("!WS!") do set "WS_ABS=%%~fI"
+for /f "usebackq delims=" %%T in (`powershell -NoProfile -Command "$p = $env:WS_ABS.Replace('\', '/'); if ($p.Length -ge 2 -and $p[1] -eq ':') { '/' + $p.Substring(0, 1).ToLower() + $p.Substring(2).TrimEnd('/') } else { '/workspace' }"`) do set "AGENTS_WORKSPACE_TARGET=%%T"
+
 rem State dirs, so docker doesn't create them as root.
 if not exist shared\git mkdir shared\git
 if not exist shared\AGENTS.md type nul > shared\AGENTS.md
