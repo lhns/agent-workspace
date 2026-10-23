@@ -66,17 +66,18 @@ find_session() {
     esac
 }
 
-# Arrow-key menu; returns 0 for resume, 1 for new. Drawn on the terminal, cleared afterwards.
+# Arrow-key menu over the arguments; sets `sel` to the chosen index. Drawn on the terminal,
+# cleared afterwards.
 choose() {
-    local sel=0 key rest out=/dev/tty
+    local items=("$@") key rest out=/dev/tty n=$#
+    sel=0
     { : >/dev/tty; } 2>/dev/null || out=/dev/stderr
     draw() {
         local i
-        for i in 0 1; do
+        for ((i = 0; i < n; i++)); do
             if [ "$i" = "$sel" ]; then printf '\e[7m> %s\e[0m\e[K\n' "${items[i]}"; else printf '  %s\e[K\n' "${items[i]}"; fi
         done
     }
-    local items=("Resume last conversation" "Start new conversation")
     trap 'printf "\e[?25h" >"$out"; exit 130' INT
     { printf '\e[?25l'; draw; } >"$out"
     while IFS= read -rsn1 key; do
@@ -84,17 +85,16 @@ choose() {
             # Arrow keys are ESC [ A/B (ESC O A/B in application mode).
             read -rsn2 -t 0.1 rest
             case $rest in
-                '[A' | 'OA') sel=0 ;;
-                '[B' | 'OB') sel=1 ;;
+                '[A' | 'OA') [ "$sel" = 0 ] || ((sel--)) ;;
+                '[B' | 'OB') [ "$sel" = $((n - 1)) ] || ((sel++)) ;;
             esac
         elif [ -z "$key" ]; then
             break
         fi
-        { printf '\e[2A'; draw; } >"$out"
+        { printf '\e[%dA' "$n"; draw; } >"$out"
     done
-    printf '\e[2A\e[J\e[?25h' >"$out"
+    printf '\e[%dA\e[J\e[?25h' "$n" >"$out"
     trap - INT
-    [ "$sel" = 0 ]
 }
 
 mode=$(tr '[:upper:]' '[:lower:]' <<<"${AGENTS_AUTORESUME:-}")
@@ -108,6 +108,26 @@ cmd=("$h")
 resume=()
 if [ "$mode" != no ] && find_session; then
     # Without a terminal (CI, pipes) there is nobody to ask: resume.
-    if [ "$mode" = yes ] || ! [ -t 0 ] || choose; then cmd=("${resume[@]}"); fi
+    if [ "$mode" = yes ] || ! [ -t 0 ]; then
+        cmd=("${resume[@]}")
+    else
+        # The harness's own session picker, for older conversations; opencode has none at startup.
+        case $h in
+            claude | pi) pick=("$h" --resume) ;;
+            cline) pick=(cline history) ;;
+            hermes) pick=(hermes sessions browse) ;;
+            *) pick=() ;;
+        esac
+        if [ ${#pick[@]} -gt 0 ]; then
+            choose "Resume last conversation" "Choose another conversation" "Start new conversation"
+        else
+            choose "Resume last conversation" "Start new conversation"
+        fi
+        # The last item, new, keeps the plain command.
+        case $sel in
+            0) cmd=("${resume[@]}") ;;
+            1) [ ${#pick[@]} -eq 0 ] || cmd=("${pick[@]}") ;;
+        esac
+    fi
 fi
 exec "${cmd[@]}"

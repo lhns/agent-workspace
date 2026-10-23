@@ -47,11 +47,15 @@ out=$(plain claude NO);   check "claude: NO starts fresh" "$out" "--continue" no
 out=$(plain claude maybe); check "unknown value warns" "$out" "is not ask, yes or no"; check "unknown value asks, so resumes without terminal" "$out" "STUB claude --continue"
 
 out=$(pty "$ENTER" claude);              check "menu: Enter resumes" "$out" "STUB claude --continue"
-out=$(pty "$DOWN$ENTER" claude);         check "menu: Down+Enter starts fresh" "$out" "STUB claude" ; check "menu: Down+Enter, no --continue" "$out" "--continue" no
+out=$(pty "$DOWN$ENTER" claude);         check "menu: Down+Enter opens the picker" "$out" "STUB claude --resume"
+out=$(pty "$DOWN$DOWN$ENTER" claude);    check "menu: Down+Down+Enter starts fresh" "$out" "STUB claude" ; check "menu: Down+Down+Enter, no --continue/--resume" "$out" "--" no
+out=$(pty "$DOWN$DOWN$DOWN$ENTER" claude); check "menu: Down past the end stays on new" "$out" "STUB claude" ; check "menu: Down past the end, no --continue/--resume" "$out" "--" no
 out=$(pty "$DOWN$UP$ENTER" claude);      check "menu: Down+Up+Enter resumes" "$out" "STUB claude --continue"
+out=$(pty "$UP$ENTER" claude);           check "menu: Up past the start stays on resume" "$out" "STUB claude --continue"
 out=$(pty "y$ENTER" claude);             check "menu: y is no shortcut, Enter resumes" "$out" "STUB claude --continue"
-check "menu: shows both items" "$out" "Start new conversation"
-out=$(pty '\033' claude "$DOWN$ENTER");   check "menu: a lone Esc does not hang or select; Down+Enter then starts fresh" "$out" "--continue" no
+check "menu: shows the picker item" "$out" "Choose another conversation"
+check "menu: shows the new item" "$out" "Start new conversation"
+out=$(pty '\033' claude "$DOWN$DOWN$ENTER"); check "menu: a lone Esc does not hang or select; Down+Down+Enter then starts fresh" "$out" "--continue" no
 out=$(pty "$DOWN" claude '\003');         check "menu: Ctrl-C starts nothing" "$out" "STUB" no ; check "menu: Ctrl-C shows the cursor again" "$out" "$(printf '\033[?25h')"
 out=$(AGENTS_AUTORESUME=yes timeout 10 script -qec "bash $start claude" /dev/null </dev/null 2>&1)
 check "yes: no menu" "$out" "Start new conversation" no
@@ -61,6 +65,7 @@ out=$(pty "" pi);                        check "pi: no session starts without a 
 mkdir -p "$HOME/.pi/agent/sessions/--tmp-aw-start-test--"
 touch "$HOME/.pi/agent/sessions/--tmp-aw-start-test--/s.jsonl"
 out=$(plain pi ask);                     check "pi: session resumes" "$out" "STUB pi --continue"
+out=$(pty "$DOWN$ENTER" pi);             check "pi: picker" "$out" "STUB pi --resume"
 
 # opencode, cline, hermes: SQLite indexes.
 db() { python3 - "$@" <<'PY'
@@ -80,6 +85,7 @@ db "$oc" "CREATE TABLE session (id TEXT, directory TEXT, parent_id TEXT, time_ar
 out=$(plain opencode ask);               check "opencode: only other folder, archived or child sessions: fresh" "$out" "--continue" no
 db "$oc" "INSERT INTO session VALUES ('d', '$work', NULL, NULL)"
 out=$(plain opencode ask);               check "opencode: session resumes" "$out" "STUB opencode --continue"
+out=$(pty "$DOWN$ENTER" opencode);       check "opencode: no picker item" "$out" "Choose another" no ; check "opencode: Down+Enter starts fresh" "$out" "--continue" no
 
 cl=$HOME/.cline/data/db/sessions.db
 msgs=$HOME/cline-messages
@@ -91,6 +97,7 @@ db "$cl" "INSERT INTO sessions VALUES ('empty', '$work', 0, NULL, '2019-01-01', 
 out=$(plain cline ask);                  check "cline: sessions without messages: fresh" "$out" "--id" no
 db "$cl" "INSERT INTO sessions VALUES ('old', '$work', 0, NULL, '2020-01-01', '$msgs/old.json')"     "INSERT INTO sessions VALUES ('stub', '$work', 0, NULL, '2021-01-01', '$msgs/empty.json')"     "INSERT INTO sessions VALUES ('sub', '$work', 1, NULL, '2022-01-01', '$msgs/sub.json')"
 out=$(plain cline ask);                  check "cline: resumes the newest session of this folder that has messages" "$out" "STUB cline --id old"
+out=$(pty "$DOWN$ENTER" cline);          check "cline: picker" "$out" "STUB cline history"
 
 hm=$HOME/.hermes/state.db
 db "$hm" "CREATE TABLE sessions (source TEXT, message_count INTEGER, git_repo_root TEXT, cwd TEXT)" \
@@ -98,4 +105,5 @@ db "$hm" "CREATE TABLE sessions (source TEXT, message_count INTEGER, git_repo_ro
 out=$(plain hermes ask);                 check "hermes: other folder, empty or non-cli sessions: fresh" "$out" "-c" no
 db "$hm" "INSERT INTO sessions VALUES ('cli', 3, NULL, '$work')"
 out=$(plain hermes ask);                 check "hermes: session resumes" "$out" "STUB hermes -c"
+out=$(pty "$DOWN$ENTER" hermes);         check "hermes: picker" "$out" "STUB hermes sessions browse"
 exit $fail
