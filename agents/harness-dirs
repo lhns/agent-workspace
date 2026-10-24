@@ -1,6 +1,0 @@
-# <harness> <state dirs under ./agents/<harness>/ that compose bind-mounts>; read by run.bat and run.sh
-claude config
-opencode config data
-pi config
-cline config
-hermes config

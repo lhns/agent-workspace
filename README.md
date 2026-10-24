@@ -10,7 +10,7 @@ Harnesses: `claude` (Claude Code), `opencode`, `pi`, `cline`, `hermes`. Docker w
 |---|---|
 | `run-agent.bat [options] [harness] [harness args...]` | `./run-agent.sh [options] [harness] [harness args...]` |
 
-With a harness (`claude`, `opencode`, `pi`, `cline`, `hermes`) that agent starts. Without one, an arrow-key menu picks it (Up/Down, Enter, Ctrl-C to quit), with the harness you used last in this workspace folder first, else the last used anywhere, remembered in `shared/.last-harness`. Without a terminal and without a harness, the last used one starts. The menu runs in a container from the base image, so it looks the same on Windows and Linux; it adds about a second. Everything after the harness goes to the agent, e.g. `./run-agent.sh claude --model sonnet`; after `--` alone the menu still picks the harness: `./run-agent.sh -- --model sonnet`. The arguments come after the launcher's own resume arguments (`claude --continue --model sonnet`).
+With a harness (`claude`, `opencode`, `pi`, `cline`, `hermes`) that agent starts. Without one, an arrow-key menu picks it (Up/Down, Enter, Ctrl-C to quit), with the harness you used last in this workspace folder first, else the last used anywhere, then the others alphabetically, remembered in `shared/.last-harness`. Without a terminal and without a harness, the last used one starts. The options and the menu run in a container from the base image, so they behave the same on Windows and Linux. That container starts on every launch, even with a harness named, and adds about 3 seconds on Docker Desktop for Windows; `--help` and option errors need Docker running too. Everything after the harness goes to the agent, e.g. `./run-agent.sh claude --model sonnet`; after `--` alone the menu still picks the harness: `./run-agent.sh -- --model sonnet`. The arguments come after the launcher's own resume arguments (`claude --continue --model sonnet`).
 
 Options go before the harness (`./run-agent.sh -h` lists them):
 
@@ -29,26 +29,27 @@ Option parsing stops at the first argument that is not an option or at `--`. An 
 
 Breaking changes: the per-harness launchers are gone; `run-claude.sh` is now `./run-agent.sh claude` (likewise `run-claude.bat` and the other harnesses). Arguments after the harness now go to the agent instead of replacing its command: `run-agent claude bash` passes `bash` to claude; use `--exec` for a shell or any other command.
 
-On Windows (`run.bat`) an empty `""` argument ends the argument list, `%` in arguments is expanded by cmd, and `--harness=NAME` is not recognized (use a space).
+On Windows, `%` in arguments is expanded by cmd (twice, via the root launcher). `--harness=NAME` is not recognized on either OS (use a space).
 
 The first run creates `.env` from `.env.example` and stops until you edit it (uncomment the keys you use).
 
-The first run, and any run after a `git pull` that changed a Dockerfile (or after the image was pruned), pulls the matching prebuilt image from ghcr.io, tagged with a hash of the Dockerfiles (kept in `agents/<harness>/.build.sha256`; delete it to redo this). The base image (`agents/base/.build.sha256`) is pulled the same way: harness images are built on it, and it runs the harness menu. If there is none (edited Dockerfile, non-amd64 machine, offline), it builds locally instead.
+The first run, and any run after a `git pull` that changed a Dockerfile (or after the image was pruned), pulls the matching prebuilt image from ghcr.io, tagged with a hash of the Dockerfiles (kept in `agents/<harness>/.build.sha256`; delete it to redo this). The base image (`agents/base/.build.sha256`) is pulled the same way on every launch first: harness images are built on it, and it runs the launcher's options and harness menu. If there is none (edited Dockerfile, non-amd64 machine, offline), it builds locally instead.
 
 ## Layout
 
 ```
 agents/base/                   shared image: OS, tools, user (uid 1000 "agent")
-agents/<harness>/              Dockerfile (only the harness install, FROM base) + its local state
-agents/start.sh                resumes or starts the agent (AGENTS_AUTORESUME)
-agents/menu.sh                 arrow-key menu, used by start.sh and pick-harness.sh
-agents/pick-harness.sh         harness menu, run in the base image when no harness is given
+agents/<harness>/              Dockerfile (only the harness install, FROM base), harness.sh + its local state
+agents/<harness>/harness.sh    what the scripts need to know about the harness: state dirs, session lookup, session picker
+agents/launch.sh               options, harness menu and shared/.last-harness; runs in the base image on every launch
+agents/start.sh                resumes or starts the agent (AGENTS_AUTORESUME), in the harness container
+agents/menu.sh                 arrow-key menu, used by launch.sh and start.sh
 agents/hermes/entrypoint.sh    copies hermes state around each run (see Hermes state)
-agents/run.*                   launch logic, one file per OS; agents/harness-dirs lists state dirs
+agents/run.*                   host side of the launcher, one file per OS: .env, workspace path, image pull/build, docker compose
 run-agent.*                    one-line launchers
-compose.yaml                   one service per harness
+compose.yaml                   base service plus one service per harness
 .env.example                   template for .env
-tests/                         CI smoke test (agent starts), start.sh, pick-harness.sh, run.sh and run.bat tests
+tests/                         CI smoke test (agent starts), launch.sh, start.sh, run.sh and run.bat tests
 shared/                        local, gitignored: git config + credentials, AGENTS.md
 workspace/                     default workspace
 docs/adr/                      design decisions
@@ -62,6 +63,10 @@ renovate.json                  dependency updates
 | git config and credentials | config, sessions, login (`agents/<harness>/config`, opencode also `data`) |
 | `shared/AGENTS.md` (global instructions) | |
 
+## Adding a harness
+
+A folder `agents/<name>/` with a `Dockerfile` (`FROM` the base image) and a `harness.sh` (copy one: `dirs`, `picker`, `find_session`), plus three things that stay per harness: its service in `compose.yaml` (the mount paths differ per harness; mount its `harness.sh` like the others), its entry in the CI matrix, and an entrypoint if it needs one (hermes). The menu, the option checks and the state dirs follow from `harness.sh`.
+
 ## Settings
 
 - `.env`: one file for all harnesses. A non-empty shell variable overrides the same name in `.env`. Add API keys there or log in inside the container.
@@ -73,6 +78,7 @@ renovate.json                  dependency updates
 - `AGENTS_AUTORESUME`: `ask` (default, also when empty) offers to resume the last conversation for the workspace folder with an arrow-key menu (or to choose another one in the harness's own picker; opencode has none at startup, use `/sessions` there), `yes` resumes without asking, `no` always starts fresh (any case). It only applies when the harness has a conversation for this folder, and `--new` starts fresh. `pick` (the launcher's `--sessions`) opens the harness's session picker instead. The launcher's `--continue`, `--new`, `--sessions` and `--ask` override this setting. The workspace is mounted at its host path (`C:\code\foo` becomes `/c/code/foo`) so conversations are kept per folder; use `/clear`, `/new` or the harness's own picker (`claude --resume`, `pi --resume`, `hermes sessions browse`, `cline history`) for older ones. Conversations stored earlier under `/workspace` don't resume.
 - `AGENTS_HARNESS`: the harness to run when none is given on the command line (a flag or positional harness wins); with it the menu never shows. Shell beats `.env`, so it can be set system-wide.
 - `AGENTS_NONINTERACTIVE`: any non-empty value is `-y`: no menu is ever shown. Shell beats `.env`.
+- Plain `docker compose run <harness>` (without a launcher) works only after one launcher run created `shared/.launch`; it then starts the harness without arguments, resuming as `AGENTS_AUTORESUME` says, and keeps `/workspace`.
 - `compose.override.yaml`: your own compose tweaks (extra mounts, ports). Gitignored, merged automatically.
 
 ## Git
@@ -106,6 +112,6 @@ Hermes refuses a home folder it can't keep private, so its home (`~/.hermes`) st
 
 ## Development
 
-CI (`.github/workflows/ci.yml`) builds every image through the real launcher and checks that each agent starts; on `main` it then publishes the tested image to ghcr.io (the packages must be set public once) and checks the pull path. CI builds the base image once and the harness images on top of it, so they share its layers (checked against the registry). It also runs shellcheck/actionlint and tests `run.sh` and `run.bat` option handling against a stub docker. Renovate runs from a scheduled workflow and needs a `RENOVATE_TOKEN` repository secret (a personal access token, so its PRs trigger CI); see [ADR 17](docs/adr/0017-pinned-versions-renovate-ci.md) and [ADR 19](docs/adr/0019-prebuilt-images-on-ghcr.md).
+CI (`.github/workflows/ci.yml`) builds every image through the real launcher and checks that each agent starts; on `main` it then publishes the tested image to ghcr.io (the packages must be set public once) and checks the pull path. CI builds the base image once and the harness images on top of it, so they share its layers (checked against the registry). It also runs shellcheck/actionlint and tests `run.sh` and `run.bat` against a stub docker, and `launch.sh` and `start.sh` in containers. Renovate runs from a scheduled workflow and needs a `RENOVATE_TOKEN` repository secret (a personal access token, so its PRs trigger CI); see [ADR 17](docs/adr/0017-pinned-versions-renovate-ci.md) and [ADR 19](docs/adr/0019-prebuilt-images-on-ghcr.md).
 
 Design decisions: [docs/adr](docs/adr/).

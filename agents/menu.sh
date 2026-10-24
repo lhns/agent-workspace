@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sourced by start.sh (harness containers) and pick-harness.sh (base container).
+# Sourced by start.sh (harness containers) and launch.sh (base container).
 
 # Arrow-key menu: choose <title> <item>...; sets `sel` to the chosen item's index. Drawn on the
 # terminal with a key hint below the items, cleared afterwards.
