@@ -48,10 +48,18 @@ call :seedgit
 rem The core (options, harness menu, last-harness) runs in the base image, ensured first, with
 rem every argument untouched.
 call :ensure base "agents\base\Dockerfile" || goto :fail
-docker compose run --rm %TTYFLAG% base %*
+rem Without a terminal the core must not swallow stdin meant for the harness.
+if defined TTYFLAG goto :corenostdin
+docker compose run --rm base %*
+goto :coredone
+:corenostdin
+docker compose run --rm -T base %* <nul
+:coredone
 if errorlevel 1 goto :fail
-rem Nothing to launch (--help).
-if not exist shared\.launch\%AGENTS_RUN_ID%\harness goto :done
+set "RESULT="
+if exist shared\.launch\%AGENTS_RUN_ID%\result set /p RESULT=<shared\.launch\%AGENTS_RUN_ID%\result
+if "%RESULT%"=="done" goto :done
+if not "%RESULT%"=="launch" goto :noresult
 
 set /p HARNESS=<shared\.launch\%AGENTS_RUN_ID%\harness
 rem The workspace path after the core's guard list.
@@ -59,11 +67,18 @@ set /p AGENTS_WORKSPACE_TARGET=<shared\.launch\%AGENTS_RUN_ID%\target
 call :mkdirs
 call :ensure %HARNESS% "agents\base\Dockerfile" "agents\%HARNESS%\Dockerfile" || goto :fail
 
+rem Recorded only now, so a failed pull or build isn't (the core only computed the content).
+move /y shared\.launch\%AGENTS_RUN_ID%\last-harness shared\.last-harness >nul
 rem The harness reads its arguments from the launch dir.
 docker compose run --rm %TTYFLAG% %HARNESS%
 set "RC=%errorlevel%"
 rd /s /q shared\.launch\%AGENTS_RUN_ID%
 exit /b %RC%
+
+:noresult
+>&2 echo Launcher core produced no result
+rd /s /q shared\.launch\%AGENTS_RUN_ID%
+exit /b 1
 
 :done
 rd /s /q shared\.launch\%AGENTS_RUN_ID%

@@ -99,9 +99,18 @@ fi
 # The core (options, harness menu, last-harness) runs in the base image, with every argument
 # untouched: Git Bash must not convert them (env conversion stays).
 ensure_image base agents/base/Dockerfile
-MSYS2_ARG_CONV_EXCL='*' docker compose run --rm ${tty:+"$tty"} base "$@" || exit $?
-# Nothing to launch (--help).
-[ -f "$launch/harness" ] || exit 0
+# Without a terminal the core must not swallow stdin meant for the harness (echo hi | run-agent claude -p).
+if [ -n "$tty" ]; then
+    MSYS2_ARG_CONV_EXCL='*' docker compose run --rm -T base "$@" </dev/null || exit $?
+else
+    MSYS2_ARG_CONV_EXCL='*' docker compose run --rm base "$@" || exit $?
+fi
+result=$(cat "$launch/result" 2>/dev/null || true)
+case $result in
+    launch) ;;
+    done) exit 0 ;; # --help
+    *) echo "Launcher core produced no result" >&2; exit 1 ;;
+esac
 
 h=$(cat "$launch/harness")
 # The workspace path after the core's guard list.
@@ -110,6 +119,8 @@ dirs=$(sed -n 's/^dirs="\(.*\)"$/\1/p' "agents/$h/harness.sh")
 for d in $dirs; do mkdir -p "agents/$h/$d"; done
 ensure_image "$h" agents/base/Dockerfile "agents/$h/Dockerfile"
 
+# Recorded only now, so a failed pull or build isn't (mv is atomic; the core only computed the content).
+mv -f "$launch/last-harness" shared/.last-harness
 # Not exec'd: the launch dir is removed afterwards. The harness reads its arguments from it.
 rc=0
 MSYS2_ARG_CONV_EXCL='*' docker compose run --rm ${tty:+"$tty"} "$h" || rc=$?

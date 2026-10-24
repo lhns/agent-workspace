@@ -31,7 +31,10 @@ argv() { local a; while IFS= read -r -d '' a; do printf '>%s\n' "$a"; done <"$la
 run() {
     fresh
     out=$(AGENTS_WORKSPACE_TARGET=${WS:-/a} bash "$core" "$@" </dev/null 2>&1); code=$?
+    settle
 }
+# What the host launcher does once the harness image is ready: moves the new state into place.
+settle() { if [ -f "$launch/last-harness" ]; then mv -f "$launch/last-harness" "$state"; fi; }
 # With a terminal and scripted keys (printf format); sets `out`, `code`. Args: keys, then launcher args.
 pty() {
     local keys=$1 key2=$2
@@ -40,6 +43,7 @@ pty() {
     # shellcheck disable=SC2059 # keys are printf escapes
     out=$({ sleep 1; printf "$keys"; sleep 1; printf "$key2"; sleep 1; } | AGENTS_WORKSPACE_TARGET=${WS:-/a} timeout 20 script -qec "bash $core $*" /dev/null 2>&1)
     code=$?
+    settle
 }
 DOWN='\033[B' ENTER='\n'
 
@@ -53,6 +57,7 @@ check "harness: no arguments" "$(argv)" ""
 check "harness: no resume mode, so AGENTS_AUTORESUME applies" "$(exists mode)" no
 check "harness: not an exec" "$(exists exec)" no
 check "harness: the target" "$(field target)" /a
+check "harness: result marker" "$(field result)" launch
 run --continue claude --model x /tmp/y
 check "--continue, args after the harness: mode" "$(field mode)" yes
 check "--continue, args after the harness: args" "$(argv)" $'>--model\n>x\n>/tmp/y'
@@ -73,7 +78,7 @@ run --harness nope;                    has "--harness with an unknown name" "$ou
 run --harness;                         check "--harness without a name: exit code" "$code" 1
 run --exec;                            has "--exec without a command" "$out" "--exec needs a command"
 run -h
-has "-h prints the usage" "$out" "Usage: run-agent"; check "-h: nothing to launch" "$code-$(exists harness)" 0-no
+has "-h prints the usage" "$out" "Usage: run-agent"; check "-h: nothing to launch" "$code-$(exists harness)-$(field result)" 0-no-done
 run --help;                            check "--help: nothing to launch" "$code-$(exists harness)" 0-no
 
 # A launch dir that can't be written is an error, not "nothing to launch".
@@ -82,7 +87,12 @@ out=$(AGENTS_WORKSPACE_TARGET=/a bash "$core" claude </dev/null 2>&1); code=$?
 chmod 755 "$launch"
 check "unwritable launch dir: exit code" "$code" 1
 has "unwritable launch dir: message" "$out" "Cannot write to"
-check "unwritable launch dir: no harness file" "$(exists harness)" no
+check "unwritable launch dir: no result marker" "$(exists result)" no
+fresh
+printf '/zz\tpi\n' >"$state"
+out=$(AGENTS_WORKSPACE_TARGET=/a bash "$core" claude </dev/null 2>&1)
+check "the state file itself is left alone" "$(cat "$state")" "$(printf '/zz\tpi')"
+check "the new state is only in the launch dir until the host moves it" "$(exists last-harness)" yes
 
 # Arguments survive the NUL-separated file: spaces, quotes, !, empty, a newline, a leading dash.
 run claude 'a b' "it's" '"q"' 'x!y' '' $'line1\nline2' -- '-z' '*'

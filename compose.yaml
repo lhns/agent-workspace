@@ -26,7 +26,8 @@ x-launch: &launch
   source: ./shared/.launch
   target: /opt/launch
   read_only: true
-  # The launchers create it; never as root via a plain `docker compose run`.
+  # The launchers create it; never as root via a plain `docker compose run`. So a plain
+  # `docker compose run <harness>` needs one launcher run first (README, Settings).
   bind:
     create_host_path: false
 

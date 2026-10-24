@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # The launcher's OS-independent half, run in the base container (compose's base service has it as
 # entrypoint) by agents/run.sh and run.bat: agents/launch.sh [options] [harness] [harness args...].
-# Parses the options, picks the harness (menu or last used) and records it in shared/.last-harness,
-# the only place that file is read or written. The result goes to the host launcher, and on to
-# agents/start.sh in the harness container, in shared/.launch/$AGENTS_RUN_ID/ (created by the host):
-#   harness          the harness name; written last, and absent when there is nothing to launch (--help)
+# Parses the options, picks the harness (menu or last used) and works out the new content of
+# shared/.last-harness (this script is the only reader; the host moves the new file into place).
+# The result goes to the host launcher, and on to agents/start.sh in the harness container, in
+# shared/.launch/$AGENTS_RUN_ID/ (created by the host, world-writable):
+#   result           written last: `launch`, or `done` when there is nothing to launch (--help)
+#   last-harness     the new content of shared/.last-harness
+#   harness          the harness name
 #   target           the workspace path in the container, after the guard list below
 #   args             the arguments for the harness (or the --exec command), NUL-separated
 #   mode             the resume mode, only when a flag set it, so AGENTS_AUTORESUME still applies
@@ -12,7 +15,7 @@
 #   exec             present for --exec
 # Settings come from the environment (compose interpolation, so a shell variable beats .env):
 # AGENTS_HARNESS, AGENTS_NONINTERACTIVE (non-empty = -y), AGENTS_WORKSPACE_TARGET, AGENTS_RUN_ID.
-# Exit 0: done (launch if `harness` exists), 130: Ctrl-C in the menu, else an error already printed.
+# Exit 0: done (launch if `result` says so), 130: Ctrl-C in the menu, else an error already printed.
 set -u
 dir=${AGENTS_DIR:-/opt/agents}
 shared=${AGENTS_SHARED:-/opt/shared}
@@ -40,6 +43,8 @@ Options (before the harness):
 USAGE
 }
 die() { echo "$*" >&2; exit 1; }
+launch=$shared/.launch/${AGENTS_RUN_ID:?AGENTS_RUN_ID is not set}
+[ -d "$launch" ] || die "$launch does not exist"
 
 # Every folder with a harness.sh is a harness (alphabetical, so the menu is stable).
 names=()
@@ -53,7 +58,7 @@ known_harness() { [ -n "$1" ] && printf '%s\n' "${names[@]}" | grep -qxF -- "$1"
 h='' hflag='' rmode='' nonint='' dashdash='' exec_cmd=()
 while [ $# -gt 0 ]; do
     case $1 in
-        -h | --help) usage; exit 0 ;;
+        -h | --help) usage; printf 'done\n' >"$launch/result" || die "Cannot write to $launch"; exit 0 ;;
         --harness) [ $# -ge 2 ] || die "--harness needs a name"; h=$2; hflag=1; shift 2 ;;
         --continue) rmode=yes; shift ;;
         --new) rmode=no; shift ;;
@@ -130,17 +135,17 @@ if [ "$rmode" = pick ]; then
 fi
 
 new=$({ [ -f "$state" ] && K=$target awk -F'\t' '$1 != ENVIRON["K"] && $1 != "*"' "$state"; printf '%s\t%s\n%s\t%s\n' "$target" "$h" '*' "$h"; })
-printf '%s\n' "$new" >"$state" || echo "Warning: cannot write $state; the last used harness is not remembered." >&2
-
-launch=$shared/.launch/${AGENTS_RUN_ID:?AGENTS_RUN_ID is not set}
-[ -d "$launch" ] || die "$launch does not exist"
-# A failed write must not look like "nothing to launch" (no harness file): the host would exit 0.
+# The container user may not own shared/, so the new state goes to the launch dir; the host moves
+# it into place once the harness image is ready.
+# A failed write must not look like "nothing to launch": the host needs the result marker.
 {
-    printf '%s\n' "$target" >"$launch/target" &&
+    printf '%s\n' "$new" >"$launch/last-harness" &&
+        printf '%s\n' "$target" >"$launch/target" &&
         { [ -z "$rmode" ] || printf '%s\n' "$rmode" >"$launch/mode"; } &&
         { [ -z "$nonint" ] || : >"$launch/noninteractive"; } &&
         { [ ${#exec_cmd[@]} -eq 0 ] || : >"$launch/exec"; } &&
         : >"$launch/args" &&
         { [ ${#hargs[@]} -eq 0 ] || printf '%s\0' "${hargs[@]}" >"$launch/args"; } &&
-        printf '%s\n' "$h" >"$launch/harness"
+        printf '%s\n' "$h" >"$launch/harness" &&
+        printf 'launch\n' >"$launch/result"
 } || die "Cannot write to $launch"

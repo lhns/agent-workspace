@@ -165,6 +165,16 @@ jobs:
           grep -q '^launched$' second.log
           if grep -q '^Building' second.log; then echo "unexpected rebuild"; exit 1; fi
 
+      # Without a terminal, stdin belongs to the harness, not to the launcher core's container.
+      - name: Piped stdin reaches the harness
+        if: matrix.harness == 'claude'
+        env:
+          AGENTS_LOCAL_BUILD: "1"
+        run: |
+          umask 000
+          echo hello | ./run-agent.sh --harness claude --exec cat 2>&1 | tee stdin.log
+          grep -q '^hello$' stdin.log
+
       # Publish only what passed above, and only from main. The tag is the Dockerfile hash, so an existing tag is the same image.
       - name: Publish image to ghcr.io
         if: github.ref == 'refs/heads/main'

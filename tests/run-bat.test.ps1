@@ -35,11 +35,14 @@ public class P { public static void Main(string[] a) {
             System.IO.File.WriteAllText(logf + ".base", args);
             var code = System.Environment.GetEnvironmentVariable("STUB_CORE_CODE");
             if (!string.IsNullOrEmpty(code)) System.Environment.Exit(int.Parse(code));
-            if (System.Environment.GetEnvironmentVariable("STUB_NO_HARNESS") == "1") System.Environment.Exit(0);
+            if (System.Environment.GetEnvironmentVariable("STUB_NO_RESULT") == "1") System.Environment.Exit(0);
+            if (System.Environment.GetEnvironmentVariable("STUB_NO_HARNESS") == "1") { System.IO.File.WriteAllText(d + "\\result", "done\n"); System.Environment.Exit(0); }
             var t = System.Environment.GetEnvironmentVariable("STUB_TARGET");
             var h = System.Environment.GetEnvironmentVariable("STUB_HARNESS");
             System.IO.File.WriteAllText(d + "\\target", (string.IsNullOrEmpty(t) ? target : t) + "\n");
             System.IO.File.WriteAllText(d + "\\harness", (string.IsNullOrEmpty(h) ? "claude" : h) + "\n");
+            System.IO.File.WriteAllText(d + "\\last-harness", "new-state\n");
+            System.IO.File.WriteAllText(d + "\\result", "launch\n");
         }
     }
     if (a.Length > 0 && a[0] == "pull" && PullFails(a[1])) System.Environment.Exit(1);
@@ -57,7 +60,7 @@ public class P { public static void Main(string[] a) {
 '@
 Add-Type -OutputType ConsoleApplication -OutputAssembly "$work\stub\docker.exe" -TypeDefinition $stub
 $env:PATH = "$work\stub;$env:PATH"
-Remove-Item Env:WORKSPACE_DIR, Env:AGENTS_HARNESS, Env:AGENTS_NONINTERACTIVE, Env:AGENTS_LOCAL_BUILD, Env:AGENTS_IMAGE_PREFIX, Env:STUB_PULL_FAIL, Env:STUB_INSPECT_FAIL, Env:STUB_HARNESS, Env:STUB_TARGET, Env:STUB_CORE_CODE, Env:STUB_NO_HARNESS -ErrorAction SilentlyContinue
+Remove-Item Env:WORKSPACE_DIR, Env:AGENTS_HARNESS, Env:AGENTS_NONINTERACTIVE, Env:AGENTS_LOCAL_BUILD, Env:AGENTS_IMAGE_PREFIX, Env:STUB_PULL_FAIL, Env:STUB_INSPECT_FAIL, Env:STUB_HARNESS, Env:STUB_TARGET, Env:STUB_CORE_CODE, Env:STUB_NO_HARNESS, Env:STUB_NO_RESULT -ErrorAction SilentlyContinue
 $failures = 0
 function Get-Hash([string[]]$files) { (Get-FileHash -Algorithm SHA256 -InputStream ([IO.MemoryStream]::new([byte[]]($files | ForEach-Object { [IO.File]::ReadAllBytes("$work\$_") })))).Hash.ToLower() }
 $baseDf = 'agents\base\Dockerfile'
@@ -205,6 +208,14 @@ try {
     Remove-Item Env:STUB_NO_HARNESS
     Check '--help: only the core runs, exit 0' ($code -eq 0 -and $calls[-1] -eq "$run base --help")
     Check '--help: the launch dir is removed' (-not (Test-Path "$work\shared\.launch\$($ids[0])"))
+    $env:STUB_NO_RESULT = '1'
+    Invoke-Launcher 'claude'
+    Remove-Item Env:STUB_NO_RESULT
+    Check 'exit 0 without a result: error, nothing launched' ($code -eq 1 -and -not ($calls -contains "$run claude") -and $out -like '*produced no result*')
+
+    Remove-Item "$work\shared\.last-harness" -ErrorAction SilentlyContinue
+    Invoke-Launcher 'claude'
+    Check 'the core''s new state is moved to shared\.last-harness' ((Get-Content "$work\shared\.last-harness") -eq 'new-state')
     foreach ($c in 1, 3, 130) {
         $env:STUB_CORE_CODE = "$c"
         Invoke-Launcher 'claude'
