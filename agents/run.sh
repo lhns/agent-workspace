@@ -80,6 +80,8 @@ AGENTS_RUN_ID=$RANDOM$RANDOM$$
 export AGENTS_RUN_ID
 launch=shared/.launch/$AGENTS_RUN_ID
 mkdir -p shared/git "$launch"
+# The container user (uid 1000) writes here, whoever the host user is.
+chmod 777 "$launch"
 # Leftovers of a killed launcher.
 find shared/.launch -mindepth 1 -maxdepth 1 -mmin +1440 -exec rm -rf {} + 2>/dev/null || true
 [ -e shared/AGENTS.md ] || : > shared/AGENTS.md

@@ -76,6 +76,14 @@ run -h
 has "-h prints the usage" "$out" "Usage: run-agent"; check "-h: nothing to launch" "$code-$(exists harness)" 0-no
 run --help;                            check "--help: nothing to launch" "$code-$(exists harness)" 0-no
 
+# A launch dir that can't be written is an error, not "nothing to launch".
+fresh; chmod 555 "$launch"
+out=$(AGENTS_WORKSPACE_TARGET=/a bash "$core" claude </dev/null 2>&1); code=$?
+chmod 755 "$launch"
+check "unwritable launch dir: exit code" "$code" 1
+has "unwritable launch dir: message" "$out" "Cannot write to"
+check "unwritable launch dir: no harness file" "$(exists harness)" no
+
 # Arguments survive the NUL-separated file: spaces, quotes, !, empty, a newline, a leading dash.
 run claude 'a b' "it's" '"q"' 'x!y' '' $'line1\nline2' -- '-z' '*'
 check "args round-trip" "$(argv)" $'>a b\n>it\'s\n>"q"\n>x!y\n>\n>line1\nline2\n>--\n>-z\n>*'

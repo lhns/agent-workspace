@@ -21,7 +21,14 @@ x-start: &start ./agents/start.sh:/usr/local/lib/agents-start.sh:ro
 x-menu: &menu ./agents/menu.sh:/usr/local/lib/agents-menu.sh:ro
 # What agents/launch.sh decided for this run (args, resume mode); each service also mounts its
 # own agents/<harness>/harness.sh (session lookup, picker) at /usr/local/lib/agents-harness.sh.
-x-launch: &launch ./shared/.launch:/opt/launch:ro
+x-launch: &launch
+  type: bind
+  source: ./shared/.launch
+  target: /opt/launch
+  read_only: true
+  # The launchers create it; never as root via a plain `docker compose run`.
+  bind:
+    create_host_path: false
 
 # Proxy settings from the shell that starts the launcher, else from .env, for builds and agents.
 # Either spelling sets both: apt, curl and git read lowercase, most others uppercase.

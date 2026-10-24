@@ -13,7 +13,7 @@ Status: Accepted. Refines [ADR 13](0013-launchers-per-os.md) (the launchers keep
 - Settings reach the core through compose interpolation (`AGENTS_HARNESS`, `AGENTS_NONINTERACTIVE`), so a shell variable still beats `.env`, and a flag beats both.
 
 ## Consequences
-- Every launch starts the base container first (about 3 seconds measured on Docker Desktop for Windows; less on Linux) and always ensures the base image, even with a harness named. Harness images share its layers, so this adds no download.
+- Every launch starts the base container first (about 3 seconds measured on Docker Desktop for Windows; not measured on Linux) and always ensures the base image, even with a harness named. Harness images share its layers, so this adds no download.
 - Options, the menu and the state file exist once; adding a harness is a folder (`Dockerfile`, `harness.sh`), a compose service and a CI matrix entry.
 - The Windows `""` and `!` limits are gone. `%` in arguments is still expanded by cmd.
 - An error in the options is reported after the base image is ensured, not before.

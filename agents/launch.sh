@@ -130,14 +130,17 @@ if [ "$rmode" = pick ]; then
 fi
 
 new=$({ [ -f "$state" ] && K=$target awk -F'\t' '$1 != ENVIRON["K"] && $1 != "*"' "$state"; printf '%s\t%s\n%s\t%s\n' "$target" "$h" '*' "$h"; })
-printf '%s\n' "$new" >"$state"
+printf '%s\n' "$new" >"$state" || echo "Warning: cannot write $state; the last used harness is not remembered." >&2
 
 launch=$shared/.launch/${AGENTS_RUN_ID:?AGENTS_RUN_ID is not set}
 [ -d "$launch" ] || die "$launch does not exist"
-printf '%s\n' "$target" >"$launch/target"
-if [ -n "$rmode" ]; then printf '%s\n' "$rmode" >"$launch/mode"; fi
-if [ -n "$nonint" ]; then : >"$launch/noninteractive"; fi
-if [ ${#exec_cmd[@]} -gt 0 ]; then : >"$launch/exec"; fi
-: >"$launch/args"
-if [ ${#hargs[@]} -gt 0 ]; then printf '%s\0' "${hargs[@]}" >"$launch/args"; fi
-printf '%s\n' "$h" >"$launch/harness"
+# A failed write must not look like "nothing to launch" (no harness file): the host would exit 0.
+{
+    printf '%s\n' "$target" >"$launch/target" &&
+        { [ -z "$rmode" ] || printf '%s\n' "$rmode" >"$launch/mode"; } &&
+        { [ -z "$nonint" ] || : >"$launch/noninteractive"; } &&
+        { [ ${#exec_cmd[@]} -eq 0 ] || : >"$launch/exec"; } &&
+        : >"$launch/args" &&
+        { [ ${#hargs[@]} -eq 0 ] || printf '%s\0' "${hargs[@]}" >"$launch/args"; } &&
+        printf '%s\n' "$h" >"$launch/harness"
+} || die "Cannot write to $launch"
