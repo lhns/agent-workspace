@@ -1,7 +1,8 @@
 #!/bin/bash
 # Tests agents/start.sh inside a harness container (see .github/workflows/ci.yml):
-#   ./run-agent.sh --harness claude --exec bash -c "$(cat tests/start.test.sh)" start-test
-# The harness binaries are stubs that print their arguments; HOME is a scratch directory.
+#   docker compose run --rm -T -v "$PWD/agents:/opt/agents:ro" claude bash -c "$(cat tests/start.test.sh)" start-test
+# The harness binaries are stubs that print their arguments; HOME is a scratch directory. The mounted
+# agents/ gives every harness's harness.sh, not only the container's own.
 set -u
 start=${START:-/usr/local/lib/agents-start.sh}
 fail=0
@@ -26,12 +27,12 @@ cd "$work" || exit 1
 
 # Without a terminal: how the harness is started.
 plain() { # harness, AGENTS_AUTORESUME
-    AGENTS_AUTORESUME=$2 bash "$start" "$1" </dev/null 2>&1
+    AGENTS_HARNESS_FILE=/opt/agents/$1/harness.sh AGENTS_AUTORESUME=$2 bash "$start" "$1" </dev/null 2>&1
 }
 # With a terminal and scripted keys (printf format) for the menu.
 pty() { # keys, harness, keys sent a second later
     # shellcheck disable=SC2059 # keys are printf escapes
-    { sleep 1; printf "$1"; sleep 1; printf "${3:-}"; sleep 1; } | AGENTS_AUTORESUME=ask timeout 20 script -qec "bash $start $2" /dev/null 2>&1
+    { sleep 1; printf "$1"; sleep 1; printf "${3:-}"; sleep 1; } | AGENTS_AUTORESUME=ask timeout 20 script -qec "AGENTS_HARNESS_FILE=/opt/agents/$2/harness.sh bash $start $2" /dev/null 2>&1
 }
 UP='\033[A' DOWN='\033[B' ENTER='\n'
 
@@ -46,26 +47,30 @@ out=$(plain claude no);   check "claude: no starts fresh" "$out" "--continue" no
 out=$(plain claude NO);   check "claude: NO starts fresh" "$out" "--continue" no
 out=$(plain claude maybe); check "unknown value warns" "$out" "is not ask, yes, no or pick"; check "unknown value asks, so resumes without terminal" "$out" "STUB claude --continue"
 
-# Arguments for the harness come after the resume (or picker) arguments.
+# Arguments for the harness come from the launch dir, after the resume (or picker) arguments.
 withargs() { # harness, AGENTS_AUTORESUME, harness args...
-    local h=$1 m=$2
+    local h=$1 m=$2 d
     shift 2
-    AGENTS_AUTORESUME=$m bash "$start" "$h" "$@" </dev/null 2>&1
+    d=$(mktemp -d)
+    printf '%s\0' "$@" >"$d/args"
+    AGENTS_LAUNCH_DIR=$d AGENTS_HARNESS_FILE=/opt/agents/$h/harness.sh AGENTS_AUTORESUME=$m bash "$start" "$h" </dev/null 2>&1
 }
+modelx=$(mktemp -d)
+printf '%s\0' --model x >"$modelx/args"
 out=$(withargs claude yes --model x);    check "args: after the resume arguments" "$out" "STUB claude --continue --model x"
 out=$(withargs claude ask --model x);    check "args: ask without a terminal resumes, then the args" "$out" "STUB claude --continue --model x"
 out=$(withargs claude no --model x "a b");  check "args: new conversation, args only" "$out" "STUB claude --model x a b" ; check "args: new conversation, no --continue" "$out" "--continue" no
-out=$(AGENTS_AUTORESUME=ask AGENTS_NONINTERACTIVE=1 timeout 10 script -qec "bash $start claude --model x" /dev/null 2>&1)
+out=$(AGENTS_AUTORESUME=ask AGENTS_NONINTERACTIVE=1 timeout 10 script -qec "AGENTS_LAUNCH_DIR=$modelx AGENTS_HARNESS_FILE=/opt/agents/claude/harness.sh bash $start claude" /dev/null 2>&1)
 check "non-interactive with a terminal resumes without a menu" "$out" "STUB claude --continue --model x" ; check "non-interactive: no menu" "$out" "Start new conversation" no
-out=$(AGENTS_AUTORESUME=pick timeout 10 script -qec "bash $start claude --model x" /dev/null 2>&1)
+out=$(AGENTS_AUTORESUME=pick timeout 10 script -qec "AGENTS_LAUNCH_DIR=$modelx AGENTS_HARNESS_FILE=/opt/agents/claude/harness.sh bash $start claude" /dev/null 2>&1)
 check "pick: the harness's own session picker, then the args" "$out" "STUB claude --resume --model x"
-out=$(AGENTS_AUTORESUME=pick timeout 10 script -qec "bash $start hermes" /dev/null 2>&1)
+out=$(AGENTS_AUTORESUME=pick timeout 10 script -qec "AGENTS_HARNESS_FILE=/opt/agents/hermes/harness.sh bash $start hermes" /dev/null 2>&1)
 check "pick: hermes" "$out" "STUB hermes sessions browse"
 out=$(withargs claude pick)
 check "pick without a terminal is an error" "$out" "--sessions needs a terminal" ; check "pick without a terminal starts nothing" "$out" "STUB" no
-out=$(AGENTS_NONINTERACTIVE=1 AGENTS_AUTORESUME=pick timeout 10 script -qec "bash $start claude" /dev/null 2>&1)
+out=$(AGENTS_NONINTERACTIVE=1 AGENTS_AUTORESUME=pick timeout 10 script -qec "AGENTS_HARNESS_FILE=/opt/agents/claude/harness.sh bash $start claude" /dev/null 2>&1)
 check "pick with non-interactive is an error" "$out" "can't be combined with -y"
-out=$(AGENTS_AUTORESUME=pick timeout 10 script -qec "bash $start opencode" /dev/null 2>&1)
+out=$(AGENTS_AUTORESUME=pick timeout 10 script -qec "AGENTS_HARNESS_FILE=/opt/agents/opencode/harness.sh bash $start opencode" /dev/null 2>&1)
 check "pick for opencode is an error" "$out" "no session picker" ; check "pick for opencode starts nothing" "$out" "STUB" no
 
 out=$(pty "$ENTER" claude);              check "menu: Enter resumes" "$out" "STUB claude --continue"
@@ -81,7 +86,7 @@ check "menu: title" "$out" "claude has an earlier conversation in /tmp/aw-start-
 check "menu: clears the screen first" "$out" "$(printf '[H[2J')"
 out=$(pty '\033' claude "$DOWN$DOWN$ENTER"); check "menu: a lone Esc does not hang or select; Down+Down+Enter then starts fresh" "$out" "--continue" no
 out=$(pty "$DOWN" claude '\003');         check "menu: Ctrl-C starts nothing" "$out" "STUB" no ; check "menu: Ctrl-C shows the cursor again" "$out" "$(printf '\033[?25h')"
-out=$(AGENTS_AUTORESUME=yes timeout 10 script -qec "bash $start claude" /dev/null </dev/null 2>&1)
+out=$(AGENTS_AUTORESUME=yes timeout 10 script -qec "AGENTS_HARNESS_FILE=/opt/agents/claude/harness.sh bash $start claude" /dev/null </dev/null 2>&1)
 check "yes: no menu" "$out" "Start new conversation" no
 
 # pi: sessions live in a folder named after the working directory.
@@ -130,4 +135,34 @@ out=$(plain hermes ask);                 check "hermes: other folder, empty or n
 db "$hm" "INSERT INTO sessions VALUES ('cli', 3, NULL, '$work')"
 out=$(plain hermes ask);                 check "hermes: session resumes" "$out" "STUB hermes -c"
 out=$(pty "$DOWN$ENTER" hermes);         check "hermes: picker" "$out" "STUB hermes sessions browse"
+
+# The launch dir that agents/launch.sh writes: args (NUL-separated), mode, noninteractive, exec.
+ld=$(mktemp -d)
+export AGENTS_HARNESS_FILE=/opt/agents/claude/harness.sh
+launched() { # harness, AGENTS_AUTORESUME: starts with the launch dir, no terminal
+    AGENTS_LAUNCH_DIR=$ld AGENTS_AUTORESUME=$2 bash "$start" "$1" </dev/null 2>&1
+}
+printf '%s\0' --model 'a b' '' $'x\ny' >"$ld/args"
+out=$(launched claude no)
+check "launch dir: args reach the harness" "$out" "STUB claude --model a b  x"
+printf '%s\0' printf '[%s]' 'a b' '' $'x\ny' "it's" '!' >"$ld/args"
+: >"$ld/exec"
+out=$(launched claude yes)
+check "launch dir: --exec runs the command, args intact" "$out" "$(printf '[a b][][x\ny][it'"'"'s][!]')"
+check "launch dir: --exec does not start the harness" "$out" "STUB" no
+rm "$ld/exec"
+: >"$ld/args"
+echo yes >"$ld/mode"
+out=$(launched claude no);               check "launch dir: the mode file beats AGENTS_AUTORESUME (yes over no)" "$out" "STUB claude --continue"
+echo no >"$ld/mode"
+out=$(launched claude yes);              check "launch dir: the mode file beats AGENTS_AUTORESUME (no over yes)" "$out" "--continue" no
+echo pick >"$ld/mode"
+out=$(launched claude no);               check "launch dir: pick without a terminal is an error" "$out" "--sessions needs a terminal"
+rm "$ld/mode"
+out=$(launched claude yes);              check "launch dir: no mode file, AGENTS_AUTORESUME applies" "$out" "STUB claude --continue"
+: >"$ld/noninteractive"
+out=$(AGENTS_LAUNCH_DIR=$ld AGENTS_AUTORESUME=ask timeout 10 script -qec "bash $start claude" /dev/null 2>&1)
+check "launch dir: noninteractive resumes without a menu" "$out" "STUB claude --continue" ; check "launch dir: noninteractive, no menu" "$out" "Start new conversation" no
+out=$(AGENTS_RUN_ID=nope AGENTS_AUTORESUME=yes bash "$start" claude </dev/null 2>&1)
+check "a run id without a launch dir is ignored" "$out" "STUB claude --continue"
 exit $fail

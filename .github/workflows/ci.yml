@@ -71,7 +71,7 @@ jobs:
         if: always() && github.ref == 'refs/heads/main'
         run: docker logout ghcr.io
 
-  # Runs the real Linux launcher per harness: it builds the image, then the agent must start.
+  # Runs the real Linux launcher per harness (core in the base image, then the harness): it builds the image, then the agent must start.
   # On main the tested image is published to ghcr.io and the launcher's pull path is checked.
   image:
     name: Build, test, publish (${{ matrix.harness }})
@@ -125,8 +125,8 @@ jobs:
           set -o pipefail
           ./run-agent.sh --harness ${{ matrix.harness }} --exec bash -c "$(cat tests/smoke.sh)" smoke ${{ matrix.harness }} "$PWD/workspace" 2>&1 | tee first.log
           grep -q "^Building ${{ matrix.harness }} image" first.log
-          # Every state dir listed for the harness must have been created by the launcher.
-          sed -n "s/^${{ matrix.harness }} //p" agents/harness-dirs | tr ' ' '\n' |
+          # Every state dir in the harness's dirs= line must have been created by the launcher.
+          sed -n 's/^dirs="\(.*\)"$/\1/p' agents/${{ matrix.harness }}/harness.sh | tr ' ' '\n' |
             while read -r d; do test -d "agents/${{ matrix.harness }}/$d" || exit 1; done
 
       # The harness image must be built on the base image: the base's layers are the first ones of the harness's.
@@ -138,24 +138,28 @@ jobs:
             { echo "base layers are not a prefix of the ${{ matrix.harness }} layers"; exit 1; }
 
       # start.sh is mounted into every image and tested against stub harnesses, so one image is enough.
+      # All harness.sh files are mounted, since the tests cover every harness's session lookup.
       - name: Start script resumes and asks as designed
         if: matrix.harness == 'claude'
         run: |
           umask 000
-          ./run-agent.sh --harness claude --exec bash -c "$(cat tests/start.test.sh)" start-test
+          docker compose run --rm -T -v "$PWD/agents:/opt/agents:ro" claude bash -c "$(cat tests/start.test.sh)" start-test
 
-      # pick-harness.sh runs from the base image (the compose base service), already built by the launch above.
-      - name: Harness picker records and chooses as designed
+      # launch.sh runs from the base image (the compose base service), already built by the launch above;
+      # the entrypoint is replaced so the test script runs instead of the launcher.
+      - name: Launch core parses, records and chooses as designed
         if: matrix.harness == 'claude'
         run: |
           umask 000
-          docker compose run --rm -T base bash -c "$(cat tests/pick-harness.test.sh)" pick-test
+          docker compose run --rm -T --entrypoint bash base -c "$(cat tests/launch.test.sh)" launch-test
 
       # AGENTS_LOCAL_BUILD stays set so a missing pull can't hide a rebuild: the `^Building` check is meaningful.
+      # umask 000: the container (uid 1000) writes into the launch dir the runner (uid 1001) creates.
       - name: Second launch does not rebuild
         env:
           AGENTS_LOCAL_BUILD: "1"
         run: |
+          umask 000
           set -o pipefail
           ./run-agent.sh --harness ${{ matrix.harness }} --exec bash -c 'echo launched' 2>&1 | tee second.log
           grep -q '^launched$' second.log
@@ -213,8 +217,8 @@ jobs:
           jq -e -n --argjson b "$base" --argjson h "$harness" '($b | length) > 0 and $h[:($b | length)] == $b' > /dev/null ||
             { echo "published base layers are not a prefix of the published ${{ matrix.harness }} layers"; exit 1; }
 
-      # Without a harness argument the launcher ensures the base image, then runs the picker; no terminal here,
-      # so the picker takes the harness the launches above recorded (claude).
+      # The launcher ensures the base image first, on every launch; without a harness argument and without a
+      # terminal the core takes the harness the launches above recorded (claude).
       - name: Menu launch pulls the published base image
         if: github.ref == 'refs/heads/main' && matrix.harness == 'claude'
         run: |
@@ -234,8 +238,8 @@ jobs:
       - name: shellcheck
         run: git ls-files '*.sh' | xargs shellcheck
       - uses: docker://rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
-      # run.sh option parsing against a stub docker; no engine needed.
-      - name: run.sh option tests
+      # run.sh (the host side) against a stub docker; no engine needed.
+      - name: run.sh tests
         run: bash tests/run-sh.test.sh
 
   # run.bat against a stub docker: build/skip/rebuild logic without a Windows docker engine.

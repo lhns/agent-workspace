@@ -1,55 +1,10 @@
 #!/usr/bin/env bash
-# Shared launcher: agents/run.sh [options] [harness] [harness args...] (see usage below).
-# Writes only gitignored paths.
+# Host side of the launcher: agents/run.sh [options] [harness] [harness args...]. It does what must
+# run on the host (.env, workspace path, image pull/build, docker compose); the options, the
+# harness menu and shared/.last-harness are agents/launch.sh, run in the base image with the
+# arguments untouched. Its result comes back in shared/.launch/<id>. Writes only gitignored paths.
 set -eu
 cd "$(dirname "$0")/.."
-
-usage() {
-    cat <<'USAGE'
-Usage: run-agent [options] [harness] [harness args...]
-       run-agent [options] -- [harness args...]
-
-Without a harness, a menu picks one. Everything after the harness (or after --) goes to the
-harness itself, e.g. run-agent claude --model sonnet.
-
-Options (before the harness):
-  --harness NAME           the harness to run, like the positional one (env AGENTS_HARNESS)
-  --continue               resume the last conversation for this folder, no menu
-  --new                    start a new conversation, no menu
-  --sessions               open the harness's own session picker (not for opencode)
-  --ask                    show the resume menu (the default)
-  -y, --non-interactive    never show a menu: last used harness, resume if there is a conversation
-                           (env AGENTS_NONINTERACTIVE)
-  --exec CMD [ARGS...]     run CMD in the harness container instead of the harness
-  -h, --help               this text
-USAGE
-}
-die() { echo "$*" >&2; exit 1; }
-known_harness() { grep -q "^$1 " agents/harness-dirs 2>/dev/null; }
-
-h='' hflag='' resume='' nonint='' dashdash='' exec_cmd=()
-while [ $# -gt 0 ]; do
-    case $1 in
-        -h | --help) usage; exit 0 ;;
-        --harness) [ $# -ge 2 ] || die "--harness needs a name"; h=$2; hflag=1; shift 2 ;;
-        --continue) resume=yes; shift ;;
-        --new) resume=no; shift ;;
-        --sessions) resume=pick; shift ;;
-        --ask) resume=ask; shift ;;
-        -y | --non-interactive) nonint=1; shift ;;
-        --exec) shift; [ $# -gt 0 ] || die "--exec needs a command"; exec_cmd=("$@"); set --; break ;;
-        --) dashdash=1; shift; break ;;
-        -*) die "Unknown option $1 (put -- before arguments meant for the harness)" ;;
-        *) break ;;
-    esac
-done
-# The first remaining argument is the harness, unless --harness or -- already ended the options.
-if [ -z "$hflag" ] && [ -z "$dashdash" ] && [ ${#exec_cmd[@]} -eq 0 ] && [ $# -gt 0 ]; then
-    known_harness "$1" || die "Unknown harness '$1' (put -- before arguments meant for the harness)"
-    h=$1; shift
-    if [ "${1:-}" = -- ]; then shift; fi
-fi
-hargs=("$@")
 
 # .env: created from the example, and refused until the user has edited it.
 [ -f .env ] || cp .env.example .env
@@ -60,12 +15,6 @@ done
 
 # Settings: a non-empty shell variable wins over .env, like compose's own interpolation.
 envval() { sed -n "s/^$1=//p" .env | tail -n1 | tr -d '\r"'; }
-# A flag or positional harness beats AGENTS_HARNESS; -y beats AGENTS_NONINTERACTIVE (any non-empty value).
-[ -n "$h" ] || h=${AGENTS_HARNESS:-$(envval AGENTS_HARNESS)}
-[ -z "$h" ] || known_harness "$h" || die "Unknown harness '$h'"
-nonint=${nonint:-${AGENTS_NONINTERACTIVE:-$(envval AGENTS_NONINTERACTIVE)}}
-# Exported so compose passes it to the picker and the harness.
-if [ -n "$nonint" ]; then export AGENTS_NONINTERACTIVE=1; else unset AGENTS_NONINTERACTIVE; fi
 ws=${WORKSPACE_DIR:-$(envval WORKSPACE_DIR)}
 if [ -z "$ws" ]; then
     mkdir -p workspace
@@ -73,16 +22,9 @@ elif [ ! -d "$ws" ]; then
     echo "WORKSPACE_DIR '$ws' does not exist" >&2; exit 1
 fi
 
-# The workspace is mounted at its host path, so harnesses that key sessions by directory keep
-# them per host folder. Paths that would hide the container's own directories fall back to /workspace.
-target=$(cd "${ws:-workspace}" && pwd -P)
-case $target in
-    / | /home | /home/agent | /home/agent/* | /usr | /usr/* | /etc | /etc/* | /bin | /bin/* | /sbin | /sbin/* \
-        | /lib* | /proc | /proc/* | /sys | /sys/* | /dev | /dev/* | /opt | /opt/* | /var | /var/*)
-        echo "Note: $target would hide a container directory; mounting the workspace at /workspace, so conversations are not kept per folder." >&2
-        target=/workspace ;;
-esac
-export AGENTS_WORKSPACE_TARGET=$target
+# The workspace is mounted at its host path (the container side guards it, see launch.sh).
+AGENTS_WORKSPACE_TARGET=$(cd "${ws:-workspace}" && pwd -P)
+export AGENTS_WORKSPACE_TARGET
 # Git Bash on Windows would hand docker C:/... instead; this is a container path.
 export MSYS2_ENV_CONV_EXCL="AGENTS_WORKSPACE_TARGET${MSYS2_ENV_CONV_EXCL:+;$MSYS2_ENV_CONV_EXCL}"
 
@@ -94,24 +36,6 @@ prefix=${prefix:-ghcr.io/lhns/agent-workspace}
 
 # Without a terminal (CI, pipes) compose can't allocate a tty and fails; -T skips it.
 tty=; [ -t 0 ] || tty=-T
-
-# --sessions needs a terminal; checked before the harness menu so it fails early.
-if [ "$resume" = pick ]; then
-    [ -z "$nonint" ] || die "--sessions can't be combined with -y"
-    [ -z "$tty" ] || die "--sessions needs a terminal"
-fi
-
-# State dirs, so docker doesn't create them as root.
-mkdir -p shared/git
-[ -e shared/AGENTS.md ] || : > shared/AGENTS.md
-
-# Seed git config from the host once; delete shared/git/config to re-seed.
-if [ ! -e shared/git/config ]; then
-    : > shared/git/config
-    for src in "$HOME/.gitconfig" "${XDG_CONFIG_HOME:-$HOME/.config}/git/config"; do
-        if [ -f "$src" ]; then cp "$src" shared/git/config; break; fi
-    done
-fi
 
 # Update an image (base or a harness) only when its Dockerfiles changed since the last time
 # (much faster than asking docker). The hash is also the ghcr tag, so a pull gets exactly this
@@ -150,30 +74,41 @@ ensure_image() {
     echo "$new" > "$hashfile"
 }
 
-# shared/.last-harness: "<workspace><TAB><harness>" for this workspace and "*<TAB>..." for
-# anywhere, so the menu offers the last used one first; the picker writes the same format.
-state=shared/.last-harness
-if [ -z "$h" ]; then
-    ensure_image base agents/base/Dockerfile
-    MSYS2_ARG_CONV_EXCL='*' docker compose run --rm ${tty:+"$tty"} base || exit $?
-    h=$(K=$target awk -F'\t' '$1 == ENVIRON["K"] { print $2; exit }' "$state" 2>/dev/null || true)
-    grep -q "^$h " agents/harness-dirs 2>/dev/null || { echo "No harness chosen" >&2; exit 1; }
-else
-    new=$({ [ -f "$state" ] && K=$target awk -F'\t' '$1 != ENVIRON["K"] && $1 != "*"' "$state"; printf '%s\t%s\n%s\t%s\n' "$target" "$h" '*' "$h"; })
-    printf '%s\n' "$new" > "$state"
+# State dirs, so docker doesn't create them as root. The launch dir is made here (not in the
+# container) so this script can delete it afterwards.
+AGENTS_RUN_ID=$RANDOM$RANDOM$$
+export AGENTS_RUN_ID
+launch=shared/.launch/$AGENTS_RUN_ID
+mkdir -p shared/git "$launch"
+# Leftovers of a killed launcher.
+find shared/.launch -mindepth 1 -maxdepth 1 -mmin +1440 -exec rm -rf {} + 2>/dev/null || true
+[ -e shared/AGENTS.md ] || : > shared/AGENTS.md
+trap 'rm -rf "$launch"' EXIT
+trap 'exit 130' INT TERM
+
+# Seed git config from the host once; delete shared/git/config to re-seed.
+if [ ! -e shared/git/config ]; then
+    : > shared/git/config
+    for src in "$HOME/.gitconfig" "${XDG_CONFIG_HOME:-$HOME/.config}/git/config"; do
+        if [ -f "$src" ]; then cp "$src" shared/git/config; break; fi
+    done
 fi
 
-# --sessions also needs a harness with a picker (known now).
-[ "$resume" != pick ] || [ "$h" != opencode ] || die "opencode has no session picker at startup; use /sessions inside it"
+# The core (options, harness menu, last-harness) runs in the base image, with every argument
+# untouched: Git Bash must not convert them (env conversion stays).
+ensure_image base agents/base/Dockerfile
+MSYS2_ARG_CONV_EXCL='*' docker compose run --rm ${tty:+"$tty"} base "$@" || exit $?
+# Nothing to launch (--help).
+[ -f "$launch/harness" ] || exit 0
 
-dirs=$(sed -n "s/^$h //p" agents/harness-dirs)
+h=$(cat "$launch/harness")
+# The workspace path after the core's guard list.
+AGENTS_WORKSPACE_TARGET=$(cat "$launch/target")
+dirs=$(sed -n 's/^dirs="\(.*\)"$/\1/p' "agents/$h/harness.sh")
 for d in $dirs; do mkdir -p "agents/$h/$d"; done
 ensure_image "$h" agents/base/Dockerfile "agents/$h/Dockerfile"
 
-# The resume mode is passed only when a flag asked for it, so AGENTS_AUTORESUME from the shell or .env still applies.
-env_args=(); [ -z "$resume" ] || env_args=(-e "AGENTS_AUTORESUME=$resume")
-# Every argument is for the container: Git Bash must not convert them (env conversion stays).
-if [ ${#exec_cmd[@]} -gt 0 ]; then
-    MSYS2_ARG_CONV_EXCL='*' exec docker compose run --rm ${tty:+"$tty"} "$h" "${exec_cmd[@]}"
-fi
-MSYS2_ARG_CONV_EXCL='*' exec docker compose run --rm ${tty:+"$tty"} ${env_args[@]+"${env_args[@]}"} "$h" bash /usr/local/lib/agents-start.sh "$h" ${hargs[@]+"${hargs[@]}"}
+# Not exec'd: the launch dir is removed afterwards. The harness reads its arguments from it.
+rc=0
+MSYS2_ARG_CONV_EXCL='*' docker compose run --rm ${tty:+"$tty"} "$h" || rc=$?
+exit "$rc"

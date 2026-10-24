@@ -1,7 +1,11 @@
-# Tests agents/run.bat against a stub `docker.exe` (compiled below; a .cmd stub would end the
-# calling batch file) that logs its arguments and fails `pull` when STUB_PULL_FAIL=1 (or names failing refs) and
-# `image inspect` when STUB_INSPECT_FAIL=1; `compose run` also records AGENTS_WORKSPACE_TARGET and AGENTS_NONINTERACTIVE. Runs on
-# a temp copy of the repo, so it leaves no state behind. Needs Windows PowerShell 5.1 (Add-Type -OutputAssembly).
+# Tests agents/run.bat (the host side) against a stub `docker.exe` (compiled below; a .cmd stub would
+# end the calling batch file) that logs its arguments and fails `pull` when STUB_PULL_FAIL=1 (or names
+# failing refs) and `image inspect` when STUB_INSPECT_FAIL=1. For the base service it plays the core
+# (agents/launch.sh, tested by tests/launch.test.sh): it records its arguments and writes the hand-off
+# files from STUB_HARNESS (default claude) and STUB_TARGET, or exits with STUB_CORE_CODE, or writes
+# nothing for STUB_NO_HARNESS=1. `compose run` also records AGENTS_WORKSPACE_TARGET and AGENTS_RUN_ID.
+# Runs on a temp copy of the repo, so it leaves no state behind. Needs Windows PowerShell 5.1
+# (Add-Type -OutputAssembly).
 $ErrorActionPreference = 'Stop'
 $src = (Resolve-Path "$PSScriptRoot\..").Path
 $work = Join-Path ([IO.Path]::GetTempPath()) "run-bat-test-$PID"
@@ -15,18 +19,28 @@ $stub = @'
 public class P { public static void Main(string[] a) {
     var shown = new System.Collections.Generic.List<string>();
     foreach (var s in a) shown.Add(s.Contains(" ") ? "\"" + s + "\"" : s);
-    System.IO.File.AppendAllText(System.Environment.GetEnvironmentVariable("STUB_LOG"), string.Join(" ", shown) + "\n");
+    var logf = System.Environment.GetEnvironmentVariable("STUB_LOG");
+    System.IO.File.AppendAllText(logf, string.Join(" ", shown) + "\n");
     var target = System.Environment.GetEnvironmentVariable("AGENTS_WORKSPACE_TARGET");
+    var id = System.Environment.GetEnvironmentVariable("AGENTS_RUN_ID");
     if (a.Length > 1 && a[0] == "compose" && a[1] == "run") {
-        System.IO.File.AppendAllText(System.Environment.GetEnvironmentVariable("STUB_LOG") + ".target", target + "\n");
-        System.IO.File.AppendAllText(System.Environment.GetEnvironmentVariable("STUB_LOG") + ".ni", "[" + System.Environment.GetEnvironmentVariable("AGENTS_NONINTERACTIVE") + "]\n");
-    }
-    // The harness picker (compose run ... base): STUB_PICK is the choice it records, STUB_PICK_CODE its exit code.
-    if (a.Length > 2 && a[0] == "compose" && a[1] == "run" && System.Array.IndexOf(a, "base") > 1) {
-        var pick = System.Environment.GetEnvironmentVariable("STUB_PICK");
-        if (!string.IsNullOrEmpty(pick)) System.IO.File.WriteAllText("shared\\.last-harness", target + "\t" + pick + "\n*\t" + pick + "\n");
-        var code = System.Environment.GetEnvironmentVariable("STUB_PICK_CODE");
-        if (!string.IsNullOrEmpty(code)) System.Environment.Exit(int.Parse(code));
+        System.IO.File.AppendAllText(logf + ".target", target + "\n");
+        System.IO.File.AppendAllText(logf + ".id", id + "\n");
+        var bi = System.Array.IndexOf(a, "base");
+        if (bi > 1) {
+            var d = "shared\\.launch\\" + id;
+            System.IO.File.AppendAllText(logf + ".dir", (System.IO.Directory.Exists(d) ? "dir" : "nodir") + "\n");
+            var args = "";
+            for (var i = bi + 1; i < a.Length; i++) args += "[" + a[i] + "]";
+            System.IO.File.WriteAllText(logf + ".base", args);
+            var code = System.Environment.GetEnvironmentVariable("STUB_CORE_CODE");
+            if (!string.IsNullOrEmpty(code)) System.Environment.Exit(int.Parse(code));
+            if (System.Environment.GetEnvironmentVariable("STUB_NO_HARNESS") == "1") System.Environment.Exit(0);
+            var t = System.Environment.GetEnvironmentVariable("STUB_TARGET");
+            var h = System.Environment.GetEnvironmentVariable("STUB_HARNESS");
+            System.IO.File.WriteAllText(d + "\\target", (string.IsNullOrEmpty(t) ? target : t) + "\n");
+            System.IO.File.WriteAllText(d + "\\harness", (string.IsNullOrEmpty(h) ? "claude" : h) + "\n");
+        }
     }
     if (a.Length > 0 && a[0] == "pull" && PullFails(a[1])) System.Environment.Exit(1);
     if (a.Length > 1 && a[0] == "image" && a[1] == "inspect" && System.Environment.GetEnvironmentVariable("STUB_INSPECT_FAIL") == "1") System.Environment.Exit(1);
@@ -43,26 +57,24 @@ public class P { public static void Main(string[] a) {
 '@
 Add-Type -OutputType ConsoleApplication -OutputAssembly "$work\stub\docker.exe" -TypeDefinition $stub
 $env:PATH = "$work\stub;$env:PATH"
-Remove-Item Env:WORKSPACE_DIR, Env:AGENTS_HARNESS, Env:AGENTS_NONINTERACTIVE, Env:AGENTS_LOCAL_BUILD, Env:AGENTS_IMAGE_PREFIX, Env:STUB_PULL_FAIL, Env:STUB_INSPECT_FAIL -ErrorAction SilentlyContinue
+Remove-Item Env:WORKSPACE_DIR, Env:AGENTS_HARNESS, Env:AGENTS_NONINTERACTIVE, Env:AGENTS_LOCAL_BUILD, Env:AGENTS_IMAGE_PREFIX, Env:STUB_PULL_FAIL, Env:STUB_INSPECT_FAIL, Env:STUB_HARNESS, Env:STUB_TARGET, Env:STUB_CORE_CODE, Env:STUB_NO_HARNESS -ErrorAction SilentlyContinue
 $failures = 0
-$hash = (Get-FileHash -Algorithm SHA256 -InputStream ([IO.MemoryStream]::new([byte[]]([IO.File]::ReadAllBytes("$work\agents\base\Dockerfile") + [IO.File]::ReadAllBytes("$work\agents\claude\Dockerfile"))))).Hash.ToLower()
-$S = 'bash /usr/local/lib/agents-start.sh'
-$ref = "ghcr.io/lhns/agent-workspace-claude:$hash"
-$pulled = "pull $ref|tag $ref agent-workspace-claude|rmi $ref|compose run --rm -T claude bash /usr/local/lib/agents-start.sh claude"
-$built = 'compose build base|compose build claude|compose run --rm -T claude bash /usr/local/lib/agents-start.sh claude'
-$unchanged = 'image inspect agent-workspace-claude|compose run --rm -T claude bash /usr/local/lib/agents-start.sh claude'
+function Get-Hash([string[]]$files) { (Get-FileHash -Algorithm SHA256 -InputStream ([IO.MemoryStream]::new([byte[]]($files | ForEach-Object { [IO.File]::ReadAllBytes("$work\$_") })))).Hash.ToLower() }
+$baseDf = 'agents\base\Dockerfile'
+$prefix = 'ghcr.io/lhns/agent-workspace'
+$run = 'compose run --rm -T'
 
 # Runs the real launcher; stdin from NUL so the `pause` after "Edit .env first" returns.
 function Invoke-Launcher([string]$arguments) {
-    Remove-Item $log -ErrorAction SilentlyContinue
+    Remove-Item $log, "$log.target", "$log.id", "$log.dir", "$log.base" -ErrorAction SilentlyContinue
     Push-Location $work
     try { cmd /c ".\run-agent.bat $arguments < NUL > out.txt 2>&1" } finally { Pop-Location }
     $script:code = $LASTEXITCODE
     $script:calls = if (Test-Path $log) { @(Get-Content $log) } else { @() }
-    $script:target = if (Test-Path "$log.target") { @(Get-Content "$log.target")[-1] } else { $null }
-    Remove-Item "$log.target" -ErrorAction SilentlyContinue
-    $script:ni = if (Test-Path "$log.ni") { @(Get-Content "$log.ni")[-1] } else { $null }
-    Remove-Item "$log.ni" -ErrorAction SilentlyContinue
+    $script:targets = if (Test-Path "$log.target") { @(Get-Content "$log.target") } else { @() }
+    $script:ids = if (Test-Path "$log.id") { @(Get-Content "$log.id") } else { @() }
+    $script:dirseen = if (Test-Path "$log.dir") { @(Get-Content "$log.dir")[-1] } else { $null }
+    $script:baseargs = if (Test-Path "$log.base") { Get-Content "$log.base" -Raw } else { $null }
     $script:out = if (Test-Path "$work\out.txt") { Get-Content "$work\out.txt" -Raw } else { '' }
 }
 # C:\a\b -> /c/a/b, where the launcher mounts the workspace.
@@ -70,70 +82,68 @@ function ConvertTo-Mount([string]$path) { '/' + $path.Substring(0, 1).ToLower() 
 function Check([string]$name, [bool]$ok) {
     if ($ok) { Write-Host "ok   $name" } else { Write-Host "FAIL $name"; $script:failures++ }
 }
+function Pull([string]$name, [string[]]$files) { $r = "${prefix}-${name}:$(Get-Hash $files)"; "pull $r|tag $r agent-workspace-$name|rmi $r" }
 
 try {
-    Invoke-Launcher 'claude'
-    Check 'fresh checkout: refuses until .env is edited' ($code -eq 1 -and $calls.Count -eq 0 -and (Test-Path "$work\.env"))
+    Invoke-Launcher '--help'
+    Check 'fresh checkout: refuses until .env is edited, even for --help' ($code -eq 1 -and $calls.Count -eq 0 -and (Test-Path "$work\.env"))
 
     Add-Content "$work\.env" '# edited'
+    $pulledBase = Pull 'base' $baseDf
+    $pulledClaude = Pull 'claude' $baseDf, 'agents\claude\Dockerfile'
     Invoke-Launcher 'claude'
-    Check 'first run pulls, tags and removes the ghcr tag, without building' (($calls -join '|') -eq $pulled)
-    Check 'first run writes the same hash as sha256sum' ((Get-Content "$work\agents\claude\.build.sha256") -eq $hash)
+    Check 'first run pulls base, runs the core, pulls the harness, runs it' (($calls -join '|') -eq "$pulledBase|$run base claude|$pulledClaude|$run claude")
+    Check 'first run writes the same hashes as sha256sum' ((Get-Content "$work\agents\claude\.build.sha256") -eq (Get-Hash $baseDf, 'agents\claude\Dockerfile') -and (Get-Content "$work\agents\base\.build.sha256") -eq (Get-Hash $baseDf))
+    Check 'the core runs with the launch dir in place, both runs share its id' ($dirseen -eq 'dir' -and $ids.Count -eq 2 -and $ids[0] -eq $ids[1] -and $ids[0])
+    Check 'the launch dir is removed afterwards' (-not (Test-Path "$work\shared\.launch\$($ids[0])"))
 
+    $unchanged = "image inspect agent-workspace-base|$run base claude|image inspect agent-workspace-claude|$run claude"
     Invoke-Launcher 'claude'
-    Check 'unchanged hash: neither pull nor build' (($calls -join '|') -eq $unchanged)
+    Check 'unchanged hashes: neither pull nor build' (($calls -join '|') -eq $unchanged)
 
     $env:STUB_INSPECT_FAIL = '1'
     Invoke-Launcher 'claude'
     Remove-Item Env:STUB_INSPECT_FAIL
-    Check 'unchanged hash but image pruned: pulls again' (($calls -join '|') -eq "image inspect agent-workspace-claude|$pulled")
+    Check 'unchanged hashes but images pruned: pulls again' (($calls -join '|') -eq "image inspect agent-workspace-base|$pulledBase|$run base claude|image inspect agent-workspace-claude|$pulledClaude|$run claude")
 
-    Add-Content "$work\agents\base\Dockerfile" '# changed'
+    Add-Content "$work\$baseDf" '# changed'
     $env:STUB_PULL_FAIL = '1'
     Invoke-Launcher 'claude'
     Remove-Item Env:STUB_PULL_FAIL
-    $newRef = $calls[0] -replace '^pull ', ''
-    $baseRef0 = "ghcr.io/lhns/agent-workspace-base:$((Get-FileHash -Algorithm SHA256 "$work\agents\base\Dockerfile").Hash.ToLower())"
-    Check 'changed Dockerfile with failing pulls: pulls base too, builds base, then claude' (($calls -join '|') -eq "pull $newRef|pull $baseRef0|$built" -and $newRef -ne $ref)
+    $baseRef = "${prefix}-base:$(Get-Hash $baseDf)"
+    $claudeRef = "${prefix}-claude:$(Get-Hash $baseDf, 'agents\claude\Dockerfile')"
+    Check 'changed base Dockerfile with failing pulls: builds base, core, builds the harness on it' (($calls -join '|') -eq "pull $baseRef|compose build base|$run base claude|pull $claudeRef|image inspect agent-workspace-base|compose build claude|$run claude")
 
     Invoke-Launcher 'claude'
     Check 'build is skipped again afterwards' (($calls -join '|') -eq $unchanged)
 
-    # Only the harness is missing on the registry: the pulled base is reused, base is not rebuilt.
+    # Only the harness is missing on the registry: the base is pulled, the harness built on it.
     Add-Content "$work\agents\claude\Dockerfile" '# changed'
     Remove-Item "$work\agents\base\.build.sha256"
     $env:STUB_PULL_FAIL = 'agent-workspace-claude'
     Invoke-Launcher 'claude'
     Remove-Item Env:STUB_PULL_FAIL
-    $newRef = $calls[0] -replace '^pull ', ''
-    Check 'harness pull misses, base pull works: builds the harness on the pulled base' (($calls -join '|') -eq "pull $newRef|pull $baseRef0|tag $baseRef0 agent-workspace-base|rmi $baseRef0|compose build claude|compose run --rm -T claude bash /usr/local/lib/agents-start.sh claude")
-
-    # Base already current locally: no pull or build of base at all.
-    Add-Content "$work\agents\claude\Dockerfile" '# changed again'
-    $env:STUB_PULL_FAIL = 'agent-workspace-claude'
-    Invoke-Launcher 'claude'
-    Remove-Item Env:STUB_PULL_FAIL
-    $newRef = $calls[0] -replace '^pull ', ''
-    Check 'harness pull misses, base current: builds only the harness' (($calls -join '|') -eq "pull $newRef|image inspect agent-workspace-base|compose build claude|compose run --rm -T claude $S claude")
-    $builtOnBase = 'image inspect agent-workspace-base|compose build claude|compose run --rm -T claude bash /usr/local/lib/agents-start.sh claude'
+    $claudeRef = "${prefix}-claude:$(Get-Hash $baseDf, 'agents\claude\Dockerfile')"
+    Check 'harness pull misses, base pull works: builds the harness on the pulled base' (($calls -join '|') -eq "$(Pull 'base' $baseDf)|$run base claude|pull $claudeRef|image inspect agent-workspace-base|compose build claude|$run claude")
 
     $env:AGENTS_LOCAL_BUILD = '1'
-    Remove-Item "$work\agents\claude\.build.sha256"
+    Remove-Item "$work\agents\claude\.build.sha256", "$work\agents\base\.build.sha256"
     Invoke-Launcher 'claude'
     Remove-Item Env:AGENTS_LOCAL_BUILD
-    Check 'AGENTS_LOCAL_BUILD in the shell builds without pulling' (($calls -join '|') -eq $builtOnBase)
+    $localBuild = "compose build base|$run base claude|image inspect agent-workspace-base|compose build claude|$run claude"
+    Check 'AGENTS_LOCAL_BUILD in the shell builds without pulling' (($calls -join '|') -eq $localBuild)
 
     Add-Content "$work\.env" 'AGENTS_LOCAL_BUILD=1'
-    Remove-Item "$work\agents\claude\.build.sha256"
+    Remove-Item "$work\agents\claude\.build.sha256", "$work\agents\base\.build.sha256"
     Invoke-Launcher 'claude'
-    Check 'AGENTS_LOCAL_BUILD in .env builds without pulling' (($calls -join '|') -eq $builtOnBase)
+    Check 'AGENTS_LOCAL_BUILD in .env builds without pulling' (($calls -join '|') -eq $localBuild)
 
     $env:AGENTS_IMAGE_PREFIX = 'registry.example/me/aw'
-    Remove-Item "$work\agents\claude\.build.sha256"
+    Remove-Item "$work\agents\claude\.build.sha256", "$work\agents\base\.build.sha256"
     (Get-Content "$work\.env") -notmatch '^AGENTS_LOCAL_BUILD=' | Set-Content "$work\.env"
     Invoke-Launcher 'claude'
     Remove-Item Env:AGENTS_IMAGE_PREFIX
-    Check 'AGENTS_IMAGE_PREFIX sets the pulled image' ($calls[0] -like 'pull registry.example/me/aw-claude:*')
+    Check 'AGENTS_IMAGE_PREFIX sets the pulled images' ($calls[0] -like 'pull registry.example/me/aw-base:*' -and $calls -like 'pull registry.example/me/aw-claude:*')
 
     $env:WORKSPACE_DIR = "$work\does-not-exist"
     Invoke-Launcher 'claude'
@@ -141,18 +151,24 @@ try {
     Check 'missing WORKSPACE_DIR stops before docker' ($code -eq 1 -and $calls.Count -eq 0)
 
     Invoke-Launcher 'claude'
-    Check 'default workspace is mounted at its mirrored host path' ($target -eq (ConvertTo-Mount "$work\workspace"))
+    Check 'default workspace is mounted at its mirrored host path' ($targets[0] -eq (ConvertTo-Mount "$work\workspace"))
 
     New-Item -ItemType Directory "$work\my proj" | Out-Null
     $env:WORKSPACE_DIR = "$work\my proj"
     Invoke-Launcher 'claude'
     Remove-Item Env:WORKSPACE_DIR
-    Check 'WORKSPACE_DIR with a space is mounted at its mirrored host path' ($target -eq (ConvertTo-Mount "$work\my proj"))
+    Check 'WORKSPACE_DIR with a space is mounted at its mirrored host path' ($targets[0] -eq (ConvertTo-Mount "$work\my proj"))
+
+    New-Item -ItemType Directory "$work\paren (x86)" | Out-Null
+    $env:WORKSPACE_DIR = "$work\paren (x86)"
+    Invoke-Launcher 'claude'
+    Remove-Item Env:WORKSPACE_DIR
+    Check 'WORKSPACE_DIR with parentheses works' ($code -eq 0 -and $targets[0] -eq (ConvertTo-Mount "$work\paren (x86)"))
 
     $env:WORKSPACE_DIR = 'workspace'
     Invoke-Launcher 'claude'
     Remove-Item Env:WORKSPACE_DIR
-    Check 'relative WORKSPACE_DIR resolves against the repo' ($target -eq (ConvertTo-Mount "$work\workspace"))
+    Check 'relative WORKSPACE_DIR resolves against the repo' ($targets[0] -eq (ConvertTo-Mount "$work\workspace"))
 
     # A path without a drive letter (UNC) can't be mirrored; skipped where the admin share is unavailable.
     $unc = '\\localhost\' + $work.Substring(0, 1) + '$' + $work.Substring(2)
@@ -160,124 +176,41 @@ try {
         $env:WORKSPACE_DIR = $unc
         Invoke-Launcher 'claude'
         Remove-Item Env:WORKSPACE_DIR
-        Check 'UNC WORKSPACE_DIR falls back to /workspace' ($target -eq '/workspace')
+        Check 'UNC WORKSPACE_DIR falls back to /workspace' ($targets[0] -eq '/workspace')
     }
 
-    # Arguments with quotes, spaces and ! reach the harness as they were typed.
+    # Every argument reaches the core as typed (the core parses them): quotes, spaces, !, empty ones, dashes.
     Invoke-Launcher 'claude bash -c "echo hi there!" x'
-    Check 'arguments with quotes, spaces and ! pass through' ($calls[-1] -eq 'compose run --rm -T claude bash /usr/local/lib/agents-start.sh claude bash -c "echo hi there!" x')
-
-    # A given harness is remembered for this workspace and for anywhere, as tab-separated lines.
-    Invoke-Launcher 'pi'
-    $last = @(Get-Content "$work\shared\.last-harness")
-    Check 'a harness argument is recorded in shared\.last-harness, keeping other workspaces' ($last[-2] -eq ((ConvertTo-Mount "$work\workspace") + "`tpi") -and $last[-1] -eq "*`tpi" -and @($last | Where-Object { $_.StartsWith("*`t") }).Count -eq 1 -and ($last -contains ((ConvertTo-Mount "$work\my proj") + "`tclaude")))
-    Check 'a harness argument runs without the menu or the base image' ($calls[-1] -eq 'compose run --rm -T pi bash /usr/local/lib/agents-start.sh pi' -and -not ($calls -match 'base$'))
-
-    # No harness: the base image is ensured first, the picker runs, then the chosen harness
-    # starts with all arguments. Base Dockerfile was edited above, so hashes come from the files.
-    function Get-Hash([string[]]$files) { (Get-FileHash -Algorithm SHA256 -InputStream ([IO.MemoryStream]::new([byte[]]($files | ForEach-Object { [IO.File]::ReadAllBytes("$work\$_") })))).Hash.ToLower() }
-    Remove-Item "$work\agents\pi\.build.sha256", "$work\agents\base\.build.sha256" -ErrorAction SilentlyContinue
-    $env:STUB_PICK = 'pi'
-    Invoke-Launcher '-- bash -c "echo hi there!"'
-    $baseRef = "ghcr.io/lhns/agent-workspace-base:$(Get-Hash 'agents\base\Dockerfile')"
-    $piRef = "ghcr.io/lhns/agent-workspace-pi:$(Get-Hash 'agents\base\Dockerfile', 'agents\pi\Dockerfile')"
-    $menuCalls = "pull $baseRef|tag $baseRef agent-workspace-base|rmi $baseRef|compose run --rm -T base|pull $piRef|tag $piRef agent-workspace-pi|rmi $piRef|compose run --rm -T pi bash /usr/local/lib/agents-start.sh pi bash -c `"echo hi there!`""
-    Check 'no harness: pulls base, runs the picker, pulls and starts the chosen harness' (($calls -join '|') -eq $menuCalls)
-
-    Invoke-Launcher '--'
-    Check 'no harness, base unchanged: picker, then the chosen harness' (($calls -join '|') -eq 'image inspect agent-workspace-base|compose run --rm -T base|image inspect agent-workspace-pi|compose run --rm -T pi bash /usr/local/lib/agents-start.sh pi')
-
-    $env:STUB_PICK_CODE = '130'
-    Invoke-Launcher '--'
-    Remove-Item Env:STUB_PICK_CODE
-    Check 'picker failure (Ctrl-C) stops with its code and starts nothing' ($code -eq 130 -and -not ($calls -match 'run --rm -T pi'))
-
-    Remove-Item Env:STUB_PICK
-    Remove-Item "$work\shared\.last-harness"
-    Invoke-Launcher '--'
-    Check 'picker recording nothing stops with an error' ($code -eq 1 -and -not ($calls -match 'run --rm -T pi'))
-
-    # Options. The state is as left above: images current, so the last call is the launch.
-    $run = 'compose run --rm -T'
-    Invoke-Launcher '--continue claude'
-    Check '--continue passes AGENTS_AUTORESUME=yes' ($calls[-1] -eq "$run -e AGENTS_AUTORESUME=yes claude $S claude")
-    Invoke-Launcher '--new --harness pi'
-    Check '--new with --harness passes AGENTS_AUTORESUME=no' ($calls[-1] -eq "$run -e AGENTS_AUTORESUME=no pi $S pi" -and -not ($calls -match 'run --rm -T base'))
-    Invoke-Launcher '--ask claude'
-    Check '--ask passes AGENTS_AUTORESUME=ask' ($calls[-1] -eq "$run -e AGENTS_AUTORESUME=ask claude $S claude")
-    Invoke-Launcher 'claude'
-    Check 'no resume flag: no -e, so the shell and .env setting applies' ($calls[-1] -eq "$run claude $S claude")
-    Invoke-Launcher 'claude --model x'
-    Check 'arguments after the harness go to the harness' ($calls[-1] -eq "$run claude $S claude --model x")
-    Invoke-Launcher '--continue claude --model x /tmp/y'
-    Check 'options before the harness, arguments after (a /path stays as typed)' ($calls[-1] -eq "$run -e AGENTS_AUTORESUME=yes claude $S claude --model x /tmp/y")
-    Invoke-Launcher 'claude -- --model x'
-    Check 'a -- right after the harness is swallowed' ($calls[-1] -eq "$run claude $S claude --model x")
-    Invoke-Launcher '--harness claude --model x'
-    Check 'an unknown option after --harness is an error, no docker call' ($code -eq 1 -and $calls.Count -eq 0 -and $out -like '*Unknown option --model*')
-    Invoke-Launcher '--harness claude -- --model x'
-    Check '--harness with -- forwards the arguments' ($calls[-1] -eq "$run claude $S claude --model x")
-    Invoke-Launcher '--harness claude foo'
-    Check '--harness: the first non-option starts the harness arguments' ($calls[-1] -eq "$run claude $S claude foo")
-    Invoke-Launcher '--foo claude'
-    Check 'unknown option before the harness: error that suggests --' ($code -eq 1 -and $calls.Count -eq 0 -and $out -like '*Unknown option --foo*put -- before*')
-    Invoke-Launcher 'bash -c x'
-    Check 'unknown harness name: error, no docker call' ($code -eq 1 -and $calls.Count -eq 0 -and $out -like '*Unknown harness bash*')
-    Invoke-Launcher '--harness nope'
-    Check '--harness with an unknown name: error' ($code -eq 1 -and $calls.Count -eq 0 -and $out -like "*Unknown harness 'nope'*")
-    Invoke-Launcher '--harness'
-    Check '--harness without a name: error' ($code -eq 1 -and $calls.Count -eq 0)
-    Invoke-Launcher '-h'
-    Check '-h prints the usage and starts nothing' ($code -eq 0 -and $calls.Count -eq 0 -and $out -like '*Usage: run-agent*--exec*')
-
-    Invoke-Launcher '--harness claude --exec bash -c "echo hi there!" /tmp/x'
-    Check '--exec runs the command in the harness container instead of the harness' ($calls[-1] -eq "$run claude bash -c `"echo hi there!`" /tmp/x")
-    Invoke-Launcher '--exec'
-    Check '--exec without a command: error' ($code -eq 1 -and $calls.Count -eq 0)
-    $env:STUB_PICK = 'pi'
-    Invoke-Launcher '--exec bash'
-    Check '--exec without a harness: the menu picks, then the command runs there' ($calls[-1] -eq "$run pi bash" -and ($calls -match 'run --rm -T base').Count -eq 1)
-    Invoke-Launcher '-- --model x'
-    Check '-- without a harness: the menu picks, arguments go to it' ($calls[-1] -eq "$run pi $S pi --model x")
-    Remove-Item Env:STUB_PICK
-
-    Invoke-Launcher '--sessions claude'
-    Check '--sessions without a terminal: error' ($code -eq 1 -and $calls.Count -eq 0 -and $out -like '*--sessions needs a terminal*')
-    Invoke-Launcher '-y --sessions claude'
-    Check '--sessions with -y: error' ($code -eq 1 -and $calls.Count -eq 0 -and $out -like "*can't be combined with -y*")
-
-    Invoke-Launcher 'claude'
-    Check 'AGENTS_NONINTERACTIVE is not set by default' ($ni -eq '[]')
-    Invoke-Launcher '-y claude'
-    Check '-y sets AGENTS_NONINTERACTIVE for compose' ($ni -eq '[1]' -and $calls[-1] -eq "$run claude $S claude")
-    Invoke-Launcher '--non-interactive claude'
-    Check '--non-interactive is -y' ($ni -eq '[1]')
-    $env:AGENTS_NONINTERACTIVE = 'yes'
-    Invoke-Launcher 'claude'
-    Remove-Item Env:AGENTS_NONINTERACTIVE
-    Check 'AGENTS_NONINTERACTIVE in the shell is -y' ($ni -eq '[1]')
-    Add-Content "$work\.env" 'AGENTS_NONINTERACTIVE=1'
-    Invoke-Launcher 'claude'
-    (Get-Content "$work\.env") -notmatch '^AGENTS_NONINTERACTIVE=' | Set-Content "$work\.env"
-    Check 'AGENTS_NONINTERACTIVE in .env is -y' ($ni -eq '[1]')
-
-    $env:AGENTS_HARNESS = 'pi'
-    Invoke-Launcher '--continue'
-    Check 'AGENTS_HARNESS in the shell picks the harness without the menu' ($calls[-1] -eq "$run -e AGENTS_AUTORESUME=yes pi $S pi" -and -not ($calls -match 'run --rm -T base'))
-    Invoke-Launcher 'claude'
-    Check 'a positional harness beats AGENTS_HARNESS' ($calls[-1] -eq "$run claude $S claude")
-    Invoke-Launcher '--harness claude'
-    Check '--harness beats AGENTS_HARNESS' ($calls[-1] -eq "$run claude $S claude")
-    Invoke-Launcher '-- --model x'
-    Check 'AGENTS_HARNESS with --: arguments go to it' ($calls[-1] -eq "$run pi $S pi --model x")
-    $env:AGENTS_HARNESS = 'nope'
+    Check 'arguments with quotes, spaces and ! pass to the core untouched' ($baseargs -eq '[claude][bash][-c][echo hi there!][x]')
+    Invoke-Launcher '--continue --harness claude "" x'
+    Check 'an empty argument does not end the argument list' ($baseargs -eq '[--continue][--harness][claude][][x]')
+    Invoke-Launcher '--harness claude --exec bash -c "echo a ! b" /tmp/x'
+    Check '--exec arguments, a ! and a /path pass untouched' ($baseargs -eq '[--harness][claude][--exec][bash][-c][echo a ! b][/tmp/x]')
     Invoke-Launcher ''
-    Remove-Item Env:AGENTS_HARNESS
-    Check 'AGENTS_HARNESS with an unknown name: error' ($code -eq 1 -and $calls.Count -eq 0)
-    Add-Content "$work\.env" 'AGENTS_HARNESS=claude'
-    Invoke-Launcher ''
-    (Get-Content "$work\.env") -notmatch '^AGENTS_HARNESS=' | Set-Content "$work\.env"
-    Check 'AGENTS_HARNESS in .env picks the harness' ($calls[-1] -eq "$run claude $S claude")
+    Check 'no arguments: the core gets none, its choice is launched' (-not $baseargs -and $calls[-1] -eq "$run claude")
+
+    # The core's answer decides what is launched.
+    $env:STUB_HARNESS = 'opencode'
+    Invoke-Launcher '--'
+    Remove-Item Env:STUB_HARNESS
+    Check 'the harness the core chose is ensured and run' ($calls[-1] -eq "$run opencode" -and ($calls -like 'pull *-opencode:*').Count -eq 1)
+    Check 'its state dirs from the dirs= line are created' ((Test-Path "$work\agents\opencode\config") -and (Test-Path "$work\agents\opencode\data"))
+    $env:STUB_TARGET = '/guarded'
+    Invoke-Launcher 'claude'
+    Remove-Item Env:STUB_TARGET
+    Check 'the target the core wrote is exported for the harness run' ($targets[-1] -eq '/guarded' -and $targets[0] -ne '/guarded')
+
+    $env:STUB_NO_HARNESS = '1'
+    Invoke-Launcher '--help'
+    Remove-Item Env:STUB_NO_HARNESS
+    Check '--help: only the core runs, exit 0' ($code -eq 0 -and $calls[-1] -eq "$run base --help")
+    Check '--help: the launch dir is removed' (-not (Test-Path "$work\shared\.launch\$($ids[0])"))
+    foreach ($c in 1, 3, 130) {
+        $env:STUB_CORE_CODE = "$c"
+        Invoke-Launcher 'claude'
+        Remove-Item Env:STUB_CORE_CODE
+        Check "core exit ${c}: passed through, nothing launched, launch dir removed" ($code -eq $c -and -not ($calls -contains "$run claude") -and -not (Test-Path "$work\shared\.launch\$($ids[0])"))
+    }
 }
 finally {
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
