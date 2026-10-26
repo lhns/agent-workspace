@@ -19,6 +19,9 @@ x-git: &git ./shared/git:/home/agent/.config/git
 # Mounted, not built in: script edits need no rebuild. Each service's command runs it.
 x-start: &start ./agents/start.sh:/usr/local/lib/agents-start.sh:ro
 x-menu: &menu ./agents/menu.sh:/usr/local/lib/agents-menu.sh:ro
+x-docker: &docker ./agents/docker.sh:/usr/local/lib/agents-docker.sh:ro
+# The seed key for Docker (agents/docker.sh): enrolled once, shared by every harness. The launchers create it.
+x-remote-docker: &remote-docker ./shared/remote-docker:/home/agent/.remote-docker
 # What agents/launch.sh decided for this run (args, resume mode); each service also mounts its
 # own agents/<harness>/harness.sh (session lookup, picker) at /usr/local/lib/agents-harness.sh.
 x-launch: &launch
@@ -42,6 +45,8 @@ x-proxy: &proxy
   no_proxy: ${no_proxy:-${NO_PROXY:-}}
 
 x-harness: &harness
+  # Names this container's Docker key in `remote-docker remote key ls` (the key comment has the hostname).
+  hostname: aw-${AGENTS_RUN_ID:-run}
   stdin_open: true
   tty: true
   working_dir: ${AGENTS_WORKSPACE_TARGET:-/workspace}
@@ -52,6 +57,9 @@ x-harness: &harness
     AGENTS_NONINTERACTIVE: ${AGENTS_NONINTERACTIVE:-}
     # Which shared/.launch/<id> to read; set by the launchers.
     AGENTS_RUN_ID: ${AGENTS_RUN_ID:-}
+    # Docker for the agent (agents/docker.sh); shell value wins over .env.
+    AGENTS_DOCKER: ${AGENTS_DOCKER:-}
+    AGENTS_DOCKER_TOKEN: ${AGENTS_DOCKER_TOKEN:-}
     <<: *proxy
     # Node's built-in fetch ignores the proxy variables unless this is set.
     NODE_USE_ENV_PROXY: "1"
@@ -87,6 +95,8 @@ services:
       - ./shared/AGENTS.md:/home/agent/.claude/CLAUDE.md
       - *start
       - *menu
+      - *docker
+      - *remote-docker
       - *launch
       - ./agents/claude/harness.sh:/usr/local/lib/agents-harness.sh:ro
 
@@ -102,6 +112,8 @@ services:
       - ./shared/AGENTS.md:/home/agent/.config/opencode/AGENTS.md
       - *start
       - *menu
+      - *docker
+      - *remote-docker
       - *launch
       - ./agents/opencode/harness.sh:/usr/local/lib/agents-harness.sh:ro
 
@@ -116,6 +128,8 @@ services:
       - ./shared/AGENTS.md:/home/agent/.pi/agent/AGENTS.md
       - *start
       - *menu
+      - *docker
+      - *remote-docker
       - *launch
       - ./agents/pi/harness.sh:/usr/local/lib/agents-harness.sh:ro
 
@@ -130,6 +144,8 @@ services:
       - ./shared/AGENTS.md:/home/agent/.agents/AGENTS.md
       - *start
       - *menu
+      - *docker
+      - *remote-docker
       - *launch
       - ./agents/cline/harness.sh:/usr/local/lib/agents-harness.sh:ro
 
@@ -147,5 +163,7 @@ services:
       - ./agents/hermes/entrypoint.sh:/usr/local/lib/hermes-entrypoint.sh:ro
       - *start
       - *menu
+      - *docker
+      - *remote-docker
       - *launch
       - ./agents/hermes/harness.sh:/usr/local/lib/agents-harness.sh:ro

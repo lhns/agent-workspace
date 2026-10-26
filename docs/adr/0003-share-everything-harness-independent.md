@@ -1,6 +1,6 @@
 # 3. Share everything that isn't harness-specific
 
-Status: Accepted. The hermes Docker volume (last consequence) is superseded by [ADR 16](0016-state-in-host-folders.md).
+Status: Accepted. The hermes Docker volume (last consequence) is superseded by [ADR 16](0016-state-in-host-folders.md). `shared/remote-docker` (the Docker seed key) is shared state added by [ADR 24](0024-docker-for-agents-through-remote-docker.md).
 
 ## Context
 Much of an agent's environment doesn't depend on which harness runs it: the code, API keys, tools, git identity and credentials, and personal instructions. Keeping a copy per harness means configuring things several times and watching them drift apart.
