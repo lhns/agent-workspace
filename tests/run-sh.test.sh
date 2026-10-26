@@ -123,6 +123,23 @@ check "missing WORKSPACE_DIR stops before docker" "$([ "$code" = 1 ] && [ -z "$c
 mkdir -p "$work/my proj"
 WORKSPACE_DIR="$work/my proj" run claude
 check "WORKSPACE_DIR is the target the core gets" "$([ "$(head -n1 "$STUB_LOG.target")" = "$(cd "$work/my proj" && pwd -P)" ]; echo $?)"
+
+# --workdir: a leading option the host applies; the core still gets it untouched.
+mkdir -p "$work/other/sub dir"
+rm -f "$STUB_LOG" "$STUB_LOG".*
+out=$(cd "$work/other" && bash "$work/agents/run.sh" --workdir 'sub dir' claude --model x </dev/null 2>&1); code=$?
+check "--workdir resolves against the caller's folder" "$([ "$code" = 0 ] && [ "$(head -n1 "$STUB_LOG.target")" = "$(cd "$work/other/sub dir" && pwd -P)" ]; echo $?)"
+check "--workdir is passed to the core untouched" "$([ "$(log base)" = '[--workdir][sub dir][claude][--model][x]' ]; echo $?)"
+mkdir -p "$work/shellws"
+WORKSPACE_DIR="$work/shellws" run --workdir "$work/my proj" claude
+check "--workdir beats a shell WORKSPACE_DIR" "$([ "$(head -n1 "$STUB_LOG.target")" = "$(cd "$work/my proj" && pwd -P)" ]; echo $?)"
+run --workdir "$work/does-not-exist" claude
+check "--workdir with a missing folder stops before docker" "$([ "$code" = 1 ] && [ -z "$calls" ] && case $out in *"does not exist"*) true ;; *) false ;; esac; echo $?)"
+run --workdir
+check "--workdir without a value stops before docker" "$([ "$code" = 1 ] && [ -z "$calls" ] && case $out in *"needs a folder"*) true ;; *) false ;; esac; echo $?)"
+run claude --workdir "$work/my proj"
+check "--workdir not first is left to the core" "$([ "$(log base)" = "[claude][--workdir][$work/my proj]" ]; echo $?)"
+
 mv .env .env.edited
 run --help
 check "fresh checkout: creates .env and refuses, even for --help" "$([ "$code" = 1 ] && [ -z "$calls" ] && [ -f .env ] && case $out in *"Edit .env first"*) true ;; *) false ;; esac; echo $?)"

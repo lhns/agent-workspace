@@ -68,10 +68,10 @@ $prefix = 'ghcr.io/lhns/agent-workspace'
 $run = 'compose run --rm -T'
 
 # Runs the real launcher; stdin from NUL so the `pause` after "Edit .env first" returns.
-function Invoke-Launcher([string]$arguments) {
+function Invoke-Launcher([string]$arguments, [string]$cwd = $work) {
     Remove-Item $log, "$log.target", "$log.id", "$log.dir", "$log.base" -ErrorAction SilentlyContinue
-    Push-Location $work
-    try { cmd /c ".\run-agent.bat $arguments < NUL > out.txt 2>&1" } finally { Pop-Location }
+    Push-Location $cwd
+    try { cmd /c """$work\run-agent.bat"" $arguments < NUL > ""$work\out.txt"" 2>&1" } finally { Pop-Location }
     $script:code = $LASTEXITCODE
     $script:calls = if (Test-Path $log) { @(Get-Content $log) } else { @() }
     $script:targets = if (Test-Path "$log.target") { @(Get-Content "$log.target") } else { @() }
@@ -172,6 +172,22 @@ try {
     Invoke-Launcher 'claude'
     Remove-Item Env:WORKSPACE_DIR
     Check 'relative WORKSPACE_DIR resolves against the repo' ($targets[0] -eq (ConvertTo-Mount "$work\workspace"))
+
+    # --workdir: resolved against the caller's folder (not the repo), beats the shell, reaches the core untouched.
+    New-Item -ItemType Directory "$work\other\sub dir" | Out-Null
+    Invoke-Launcher '--workdir "sub dir" claude --model x' "$work\other"
+    Check '--workdir resolves against the caller''s folder' ($code -eq 0 -and $targets[0] -eq (ConvertTo-Mount "$work\other\sub dir"))
+    Check '--workdir is passed to the core untouched' ($baseargs -eq '[--workdir][sub dir][claude][--model][x]')
+    $env:WORKSPACE_DIR = "$work\workspace"
+    Invoke-Launcher "--workdir ""$work\my proj"" claude"
+    Remove-Item Env:WORKSPACE_DIR
+    Check '--workdir beats a shell WORKSPACE_DIR' ($targets[0] -eq (ConvertTo-Mount "$work\my proj"))
+    Invoke-Launcher "--workdir ""$work\does-not-exist"" claude"
+    Check '--workdir with a missing folder stops before docker' ($code -eq 1 -and $calls.Count -eq 0 -and $out -like '*does not exist*')
+    Invoke-Launcher '--workdir'
+    Check '--workdir without a value stops before docker' ($code -eq 1 -and $calls.Count -eq 0 -and $out -like '*needs a folder*')
+    Invoke-Launcher "claude --workdir ""$work\my proj"""
+    Check '--workdir not first is left to the core' ($baseargs -eq "[claude][--workdir][$work\my proj]")
 
     # A path without a drive letter (UNC) can't be mirrored; skipped where the admin share is unavailable.
     $unc = '\\localhost\' + $work.Substring(0, 1) + '$' + $work.Substring(2)

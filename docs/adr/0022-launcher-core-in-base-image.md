@@ -1,6 +1,6 @@
 # 22. Launcher core in the base image
 
-Status: Accepted. Refines [ADR 13](0013-launchers-per-os.md) (the launchers keep only OS-specific work) and [ADR 21](0021-one-launcher-with-harness-menu.md) (the base container now runs on every launch and owns `shared/.last-harness`).
+Status: Accepted. Refines [ADR 13](0013-launchers-per-os.md) (the launchers keep only OS-specific work) and [ADR 21](0021-one-launcher-with-harness-menu.md) (the base container now runs on every launch and owns `shared/.last-harness`). Refined by [ADR 23](0023-start-in-any-folder.md): the host reads one option itself, a leading `--workdir`, because the mount source must be known before the core runs; the core only checks its position.
 
 ## Context
 `run.sh` and `run.bat` both parsed the options, validated the harness, wrote `shared/.last-harness` (together with `pick-harness.sh`) and applied the workspace guard list, once in bash and once in cmd. The cmd parser was fragile (an empty `""` argument or a `!` broke it), and knowledge about one harness was spread over `harness-dirs`, `start.sh` and the launchers.

@@ -1,6 +1,6 @@
 # 13. Windows and Linux launchers sharing one script per OS
 
-Status: Accepted. The per-harness root wrappers are superseded by [ADR 21](0021-one-launcher-with-harness-menu.md). The OS-independent logic moved into the base image, and `harness-dirs` into `agents/<harness>/harness.sh`: see [ADR 22](0022-launcher-core-in-base-image.md).
+Status: Accepted. The per-harness root wrappers are superseded by [ADR 21](0021-one-launcher-with-harness-menu.md). The OS-independent logic moved into the base image, and `harness-dirs` into `agents/<harness>/harness.sh`: see [ADR 22](0022-launcher-core-in-base-image.md). Refined by [ADR 23](0023-start-in-any-folder.md): the install and uninstall scripts are per OS too.
 
 ## Context
 Users run this on Windows and Linux hosts. The old per-repo `.bat` files were copies of each other, and Linux had no launcher.

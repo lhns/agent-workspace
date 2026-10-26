@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
-# Host side of the launcher: agents/run.sh [options] [harness] [harness args...]. It does what must
+# Host side of the launcher: agents/run.sh [--workdir DIR] [options] [harness] [harness args...]. It does what must
 # run on the host (.env, workspace path, image pull/build, docker compose); the options, the
 # harness menu and shared/.last-harness are agents/launch.sh, run in the base image with the
 # arguments untouched. Its result comes back in shared/.launch/<id>. Writes only gitignored paths.
 set -eu
+# A leading --workdir DIR is the workspace (beats the shell and .env). It is resolved against the
+# caller's folder, so before the cd below. The arguments stay untouched: the core skips it.
+if [ "${1:-}" = --workdir ]; then
+    [ $# -ge 2 ] || { echo "--workdir needs a folder" >&2; exit 1; }
+    [ -d "$2" ] || { echo "--workdir '$2' does not exist" >&2; exit 1; }
+    WORKSPACE_DIR=$(cd "$2" && pwd -P)
+fi
 cd "$(dirname "$0")/.."
 
 # .env: created from the example, and refused until the user has edited it.
