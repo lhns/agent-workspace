@@ -119,16 +119,26 @@ Off by default. With `AGENTS_DOCKER=remote-docker` the agent gets `docker` and `
 Setup:
 
 1. You need a remote-docker workspace reachable from the containers: an `ssh://`, `ws://` or `wss://` address. A local `remote machine` workspace (WSL, Hyper-V) does not work from a container. Your account on it must be allowed to create tokens (`WORKSPACE_USER_TOKENS`, true by default).
-2. On your computer, with remote-docker enrolled there: `remote-docker remote token create`. Put the `rdt1.…` token in `.env` as `AGENTS_DOCKER_TOKEN`, next to `AGENTS_DOCKER=remote-docker`. Add `REMOTE_DOCKER_HOST`, `REMOTE_DOCKER_USER` or `REMOTE_DOCKER_CA_FILE` only if the address in the token does not work from the container, or for a private CA. Any `REMOTE_DOCKER_*` setting works (it reaches every harness).
-3. Start an agent. The first start enrols a seed key in `shared/remote-docker/seed` and prints `enrolled; you can remove AGENTS_DOCKER_TOKEN from .env`. Remove the token; it is single use and expires after 24 hours. Later starts do not need it.
+2. On your computer, with remote-docker enrolled there: `remote-docker remote token create`. Put the `rdt1.…` token (or the whole line it prints) in `.env` as `AGENTS_DOCKER_TOKEN`, next to `AGENTS_DOCKER=remote-docker`. Add `REMOTE_DOCKER_HOST`, `REMOTE_DOCKER_USER` or `REMOTE_DOCKER_CA_FILE` only if the address in the token does not work from the container, or for a private CA. Any `REMOTE_DOCKER_*` setting works (it reaches every harness).
+3. Start an agent. The first start enrols a seed key in `shared/remote-docker/seed` and prints `enrolled; you can remove AGENTS_DOCKER_TOKEN from .env`. Remove the token; it is single use. Later starts do not need it. (Agents started together on the first run are fine: one enrols, the others wait for it.)
 
-How it works: the seed key only mints tokens. Every container enrols a fresh key of its own (its comment is `remote-docker-aw-<run id>-agent`), starts its own session, exports `DOCKER_HOST`, and removes the key when it exits. One key per container is needed because two sessions on one key collide on the workspace. Not enrolled, or the workspace does not answer within `AGENTS_DOCKER_TIMEOUT` (60) seconds: one line is printed and the agent starts without Docker.
+How it works: the seed key only mints tokens. Every container enrols a fresh key of its own (the key comment contains the container's hostname, `aw-<run id>`), starts its own session, exports `DOCKER_HOST` (so Docker SDKs and tools work too, not only the `docker` command), and removes the key when it exits, also for `--exec`. One key per container is needed because two sessions on one key collide on the workspace. The first start takes a few seconds longer.
+
+Troubleshooting: when Docker cannot be set up, one line starting `agent-workspace docker:` is printed and the agent starts without Docker.
+
+- `not enrolled`: no token yet or the seed was reset; do step 2 again.
+- `enrolling the seed key failed` / `minting a token failed` / `enrolling this container failed`: the end of remote-docker's message follows. Typical causes: an expired or used token (create a new one), a workspace address the container cannot reach (set `REMOTE_DOCKER_HOST`), or `WORKSPACE_USER_TOKENS` off.
+- `the workspace did not answer within 60s`: the workspace is down, unreachable from the container or slow to start; raise `AGENTS_DOCKER_TIMEOUT`.
+- `could not remove this container's key`: remove it by hand, see below.
+
+To turn Docker off, unset `AGENTS_DOCKER`. To start over (new account or workspace), delete `shared/remote-docker/seed` and the seed's key on your computer, then redo the setup.
 
 Things to know:
 
 - The agents act on your account. They see, stop and remove your containers and images, and containers started by agents keep running after the agent exits. Anyone who can read `shared/remote-docker` can mint keys for the account; revoke the seed by removing its key.
 - Bind mounts only work for paths that exist inside the agent container (the workspace, `/tmp`).
 - Compose project names default to the folder name, so an agent and you in the same project share compose projects (and two agent containers in one folder do too). Set `COMPOSE_PROJECT_NAME` where that matters.
+- The seed key is stored unencrypted in `shared/remote-docker/seed` (gitignored).
 - A killed container (`docker kill`, a crash) leaves its key behind. List them on your computer with `remote-docker remote key ls` (stale ones have `aw-` in the comment and are not marked "this machine"; the seed's public key is in `shared/remote-docker/seed/id_ed25519.pub`, keep that one) and remove with `remote-docker remote key rm <fingerprint>`.
 
 ## Git
