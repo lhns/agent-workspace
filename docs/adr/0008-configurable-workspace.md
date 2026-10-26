@@ -1,6 +1,6 @@
 # 8. Configurable workspace directory
 
-Status: Accepted. The fixed `/workspace` target is superseded by [ADR 20](0020-workspace-at-host-path.md).
+Status: Accepted. The fixed `/workspace` target is superseded by [ADR 20](0020-workspace-at-host-path.md). Refined by [ADR 23](0023-start-in-any-folder.md): the workspace also comes from `--workdir` or the folder the `agent-workspace` command runs in (precedence: `--workdir` > shell, including the command's `WORKSPACE_DIR` > `.env`).
 
 ## Context
 A fixed `./workspace` forces users to clone their projects inside this repo, or to move existing checkouts there.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The launcher's OS-independent half, run in the base container (compose's base service has it as
-# entrypoint) by agents/run.sh and run.bat: agents/launch.sh [options] [harness] [harness args...].
+# entrypoint) by agents/run.sh and run.bat: agents/launch.sh [--workdir DIR] [options] [harness] [harness args...].
 # Parses the options, picks the harness (menu or last used) and works out the new content of
 # shared/.last-harness (this script is the only reader; the host moves the new file into place).
 # The result goes to the host launcher, and on to agents/start.sh in the harness container, in
@@ -24,13 +24,15 @@ shared=${AGENTS_SHARED:-/opt/shared}
 
 usage() {
     cat <<'USAGE'
-Usage: run-agent [options] [harness] [harness args...]
-       run-agent [options] -- [harness args...]
+Usage: run-agent [--workdir DIR] [options] [harness] [harness args...]
+       run-agent [--workdir DIR] [options] -- [harness args...]
 
 Without a harness, a menu picks one. Everything after the harness (or after --) goes to the
 harness itself, e.g. run-agent claude --model sonnet.
 
 Options (before the harness):
+  --workdir DIR            the folder the agent works in (must be the first argument;
+                           overrides WORKSPACE_DIR)
   --harness NAME           the harness to run, like the positional one (env AGENTS_HARNESS)
   --continue               resume the last conversation for this folder, no menu
   --new                    start a new conversation, no menu
@@ -56,8 +58,15 @@ done
 known_harness() { [ -n "$1" ] && printf '%s\n' "${names[@]}" | grep -qxF -- "$1"; }
 
 h='' hflag='' rmode='' nonint='' dashdash='' exec_cmd=()
+# --workdir is applied by the host (the mount source must be known before this runs); only its
+# position is checked here.
+if [ "${1:-}" = --workdir ]; then
+    [ $# -ge 2 ] || die "--workdir needs a folder"
+    shift 2
+fi
 while [ $# -gt 0 ]; do
     case $1 in
+        --workdir) die "--workdir must come first" ;;
         -h | --help) usage; printf 'done\n' >"$launch/result" || die "Cannot write to $launch"; exit 0 ;;
         --harness) [ $# -ge 2 ] || die "--harness needs a name"; h=$2; hflag=1; shift 2 ;;
         --continue) rmode=yes; shift ;;

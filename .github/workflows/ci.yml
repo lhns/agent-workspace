@@ -251,6 +251,9 @@ jobs:
       # run.sh (the host side) against a stub docker; no engine needed.
       - name: run.sh tests
         run: bash tests/run-sh.test.sh
+      # install.sh and uninstall.sh in a temp HOME; the prompt is driven through script(1).
+      - name: install.sh tests
+        run: bash tests/install.test.sh
 
   # run.bat against a stub docker: build/skip/rebuild logic without a Windows docker engine.
   windows-launcher:
@@ -260,3 +263,7 @@ jobs:
       - name: run.bat tests
         shell: powershell
         run: ./tests/run-bat.test.ps1
+      # On the runner's own user PATH and HKCU (a throwaway machine); it cleans up through uninstall.bat.
+      - name: install.bat tests
+        shell: powershell
+        run: ./tests/install.test.ps1 -Real

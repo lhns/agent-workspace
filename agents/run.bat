@@ -1,11 +1,15 @@
 @echo off
-rem Host side of the launcher, called by the root run-agent.bat: [options] [harness] [harness args...].
+rem Host side of the launcher, called by the root run-agent.bat: [--workdir DIR] [options] [harness] [harness args...].
 rem It does what must run on the host (.env, workspace path, image pull/build, docker compose);
 rem the options, the harness menu and shared\.last-harness are agents\launch.sh, run in the base
 rem image with %* untouched. Its result comes back in shared\.launch\<id>. Writes only gitignored paths.
 rem Delayed expansion stays off in the main part, so ! in arguments survives; it is on in the
 rem subroutines. Known limit: % in arguments is expanded by cmd (twice via the root launcher).
 setlocal disableDelayedExpansion
+rem A leading --workdir DIR is the workspace (beats the shell and .env). %~f2 resolves it against the
+rem caller's folder, so it must come before the cd below. %* stays untouched: the core skips it.
+if /i "%~1"=="--workdir" if "%~2"=="" >&2 echo --workdir needs a folder& exit /b 1
+if /i "%~1"=="--workdir" set "WORKSPACE_DIR=%~f2"
 cd /d "%~dp0.."
 
 rem Without a terminal (stdin redirected: CI, pipes) compose can't allocate a tty and fails; -T skips it.

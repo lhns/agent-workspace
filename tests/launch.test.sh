@@ -81,6 +81,17 @@ run -h
 has "-h prints the usage" "$out" "Usage: run-agent"; check "-h: nothing to launch" "$code-$(exists harness)-$(field result)" 0-no-done
 run --help;                            check "--help: nothing to launch" "$code-$(exists harness)" 0-no
 
+# --workdir is applied by the host; the core accepts it only first, and skips it.
+run --workdir /some/dir --continue claude --model x
+check "--workdir first: skipped, the rest parses" "$code-$(field harness)-$(field mode)-$(argv)" $'0-claude-yes->--model\n>x'
+run --workdir /some/dir claude;        check "--workdir then the harness: accepted" "$code-$(field harness)" 0-claude
+run --workdir;                       has "--workdir without a value" "$out" "--workdir needs a folder"; check "--workdir without a value: exit code" "$code-$(exists harness)" 1-no
+run --continue --workdir /d claude;    has "--workdir after another option" "$out" "--workdir must come first"; check "--workdir after another option: nothing handed off" "$code-$(exists harness)" 1-no
+run --harness claude --workdir /d;     has "--workdir after --harness" "$out" "--workdir must come first"
+run claude --workdir /d;               check "--workdir after the harness is a harness argument" "$(argv)" $'>--workdir\n>/d'
+run claude -- --workdir /d;            check "--workdir after -- is a harness argument" "$(argv)" $'>--workdir\n>/d'
+run --workdir /d --workdir /e claude;  has "a second --workdir" "$out" "--workdir must come first"
+
 # A launch dir that can't be written is an error, not "nothing to launch".
 fresh; chmod 555 "$launch"
 out=$(AGENTS_WORKSPACE_TARGET=/a bash "$core" claude </dev/null 2>&1); code=$?

@@ -8,7 +8,7 @@ Harnesses: `claude` (Claude Code), `opencode`, `pi`, `cline`, `hermes`. Docker w
 
 | Windows | Linux |
 |---|---|
-| `run-agent.bat [options] [harness] [harness args...]` | `./run-agent.sh [options] [harness] [harness args...]` |
+| `run-agent.bat [--workdir DIR] [options] [harness] [harness args...]` | `./run-agent.sh [--workdir DIR] [options] [harness] [harness args...]` |
 
 With a harness (`claude`, `opencode`, `pi`, `cline`, `hermes`) that agent starts. Without one, an arrow-key menu picks it (Up/Down, Enter, Ctrl-C to quit), with the harness you used last in this workspace folder first, else the last used anywhere, then the others alphabetically, remembered in `shared/.last-harness`. Without a terminal and without a harness, the last used one starts. The options and the menu run in a container from the base image, so they behave the same on Windows and Linux. That container starts on every launch, even with a harness named, and adds about 3 seconds on Docker Desktop for Windows; `--help` and option errors need Docker running too. Everything after the harness goes to the agent, e.g. `./run-agent.sh claude --model sonnet`; after `--` alone the menu still picks the harness: `./run-agent.sh -- --model sonnet`. The arguments come after the launcher's own resume arguments (`claude --continue --model sonnet`).
 
@@ -16,6 +16,7 @@ Options go before the harness (`./run-agent.sh -h` lists them):
 
 | Option | Effect |
 |---|---|
+| `--workdir DIR` | the folder the agent works in, instead of `WORKSPACE_DIR`; relative to where you run the launcher. Must be the first argument |
 | `--harness NAME` | the harness to run, like the positional one |
 | `--continue` | resume the last conversation for this folder, no menu |
 | `--new` | start a new conversation, no menu |
@@ -35,6 +36,17 @@ The first run creates `.env` from `.env.example` and stops until you edit it (un
 
 The first run, and any run after a `git pull` that changed a Dockerfile (or after the image was pruned), pulls the matching prebuilt image from ghcr.io, tagged with a hash of the Dockerfiles (kept in `agents/<harness>/.build.sha256`; delete it to redo this). The base image (`agents/base/.build.sha256`) is pulled the same way on every launch first: harness images are built on it, and it runs the launcher's options and harness menu. If there is none (edited Dockerfile, non-amd64 machine, offline), it builds locally instead.
 
+## Use in any folder
+
+The workspace is the folder you start in, not only the one in `.env`. Run `install.bat` (Windows) or `./install.sh` (Linux, macOS) once; it needs no admin rights and no Docker, and writes only per-user files:
+
+- the command `agent-workspace`, which starts the launcher with the current folder as the workspace: `cd ~/code/foo && agent-workspace claude`. Windows: `%LOCALAPPDATA%\agent-workspace\bin`, added to your user PATH (open a new terminal). Linux/macOS: `~/.local/bin/agent-workspace`; the script says so if that folder is not on your PATH.
+- Windows only: a right-click entry "Open with agent-workspace" on folders and on a folder's empty background (registry keys under `HKCU\Software\Classes\Directory`). It opens Windows Terminal if installed, else a cmd window, in that folder; the usual harness and resume menus follow, and the shell stays open after the agent exits. On Windows 11 it is under "Show more options" (the classic menu): the compact menu only takes packaged apps. There is no file-manager entry on Linux or macOS.
+
+Any launcher also takes the folder as an argument: `./run-agent.sh --workdir ~/code/foo claude`. An explicit `--workdir` beats the command's current folder, which beats a `WORKSPACE_DIR` in the shell, which beats `.env`. A relative `--workdir` is relative to where you run it; a relative `WORKSPACE_DIR` in the shell is relative to this repo, so use an absolute one.
+
+The command holds the path of this repo: after moving it, run the install script again. Running it on an existing install asks `[U]pdate / [r]emove / [c]ancel` (Enter updates; without a terminal it updates). `install.bat -Update` / `./install.sh --update` skip the question. `uninstall.bat` / `./uninstall.sh` remove everything the install wrote and say what they removed.
+
 ## Layout
 
 ```
@@ -47,9 +59,10 @@ agents/menu.sh                 arrow-key menu, used by launch.sh and start.sh
 agents/hermes/entrypoint.sh    copies hermes state around each run (see Hermes state)
 agents/run.*                   host side of the launcher, one file per OS: .env, workspace path, image pull/build, docker compose
 run-agent.*                    one-line launchers
+install.*, uninstall.*         the `agent-workspace` command and Explorer entry (agents/install.ps1 does the Windows work)
 compose.yaml                   base service plus one service per harness
 .env.example                   template for .env
-tests/                         CI smoke test (agent starts), launch.sh, start.sh, run.sh and run.bat tests
+tests/                         CI smoke test (agent starts), launch.sh, start.sh, run.sh, run.bat and install tests
 shared/                        local, gitignored: git config + credentials, AGENTS.md
 workspace/                     default workspace
 docs/adr/                      design decisions
@@ -70,7 +83,7 @@ A folder `agents/<name>/` with a `Dockerfile` (`FROM` the base image) and a `har
 ## Settings
 
 - `.env`: one file for all harnesses. A non-empty shell variable overrides the same name in `.env`. Add API keys there or log in inside the container.
-- `WORKSPACE_DIR` in `.env`: the folder the agent works in; empty means `./workspace`. A shell variable overrides it per run: `WORKSPACE_DIR=~/code/foo ./run-agent.sh claude`. The folder must exist.
+- `WORKSPACE_DIR` in `.env`: the folder the agent works in; empty means `./workspace`. A shell variable overrides it per run: `WORKSPACE_DIR=~/code/foo ./run-agent.sh claude`, and `--workdir` overrides both (see [Use in any folder](#use-in-any-folder)). The folder must exist.
 - Proxy: set `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (either case; each sets both spellings) in the shell before starting a launcher, or in `.env`. They are used for image builds and passed to the agent. A proxy on the host itself is `host.docker.internal`, not `localhost`. Pulls of the prebuilt images are done by Docker itself and use Docker's proxy settings; if a pull fails, the local build uses these variables.
 - `AGENTS_LOCAL_BUILD`: non-empty (e.g. `1`) always builds the image locally instead of pulling it.
 - `AGENTS_IMAGE_PREFIX`: where prebuilt images are pulled from, default `ghcr.io/lhns/agent-workspace`; set it for a fork or mirror.
@@ -112,6 +125,6 @@ Hermes refuses a home folder it can't keep private, so its home (`~/.hermes`) st
 
 ## Development
 
-CI (`.github/workflows/ci.yml`) builds every image through the real launcher and checks that each agent starts; on `main` it then publishes the tested image to ghcr.io (the packages must be set public once) and checks the pull path. CI builds the base image once and the harness images on top of it, so they share its layers (checked against the registry). It also runs shellcheck/actionlint and tests `run.sh` and `run.bat` against a stub docker, and `launch.sh` and `start.sh` in containers. Renovate runs from a scheduled workflow and needs a `RENOVATE_TOKEN` repository secret (a personal access token, so its PRs trigger CI); see [ADR 17](docs/adr/0017-pinned-versions-renovate-ci.md) and [ADR 19](docs/adr/0019-prebuilt-images-on-ghcr.md).
+CI (`.github/workflows/ci.yml`) builds every image through the real launcher and checks that each agent starts; on `main` it then publishes the tested image to ghcr.io (the packages must be set public once) and checks the pull path. CI builds the base image once and the harness images on top of it, so they share its layers (checked against the registry). It also runs shellcheck/actionlint and tests `run.sh` and `run.bat` against a stub docker, the install scripts (on the Windows runner's own user PATH and registry), and `launch.sh` and `start.sh` in containers. Renovate runs from a scheduled workflow and needs a `RENOVATE_TOKEN` repository secret (a personal access token, so its PRs trigger CI); see [ADR 17](docs/adr/0017-pinned-versions-renovate-ci.md) and [ADR 19](docs/adr/0019-prebuilt-images-on-ghcr.md).
 
 Design decisions: [docs/adr](docs/adr/).
