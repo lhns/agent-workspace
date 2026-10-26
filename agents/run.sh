@@ -87,7 +87,7 @@ ensure_image() {
 AGENTS_RUN_ID=$RANDOM$RANDOM$$
 export AGENTS_RUN_ID
 launch=shared/.launch/$AGENTS_RUN_ID
-mkdir -p shared/git "$launch"
+mkdir -p shared/git shared/remote-docker "$launch"
 # The container user (uid 1000) writes here, whoever the host user is.
 chmod 777 "$launch"
 # Leftovers of a killed launcher.

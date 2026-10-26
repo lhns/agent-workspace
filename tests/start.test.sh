@@ -165,4 +165,83 @@ out=$(AGENTS_LAUNCH_DIR=$ld AGENTS_AUTORESUME=ask timeout 10 script -qec "bash $
 check "launch dir: noninteractive resumes without a menu" "$out" "STUB claude --continue" ; check "launch dir: noninteractive, no menu" "$out" "Start new conversation" no
 out=$(AGENTS_RUN_ID=nope AGENTS_AUTORESUME=yes bash "$start" claude </dev/null 2>&1)
 check "a run id without a launch dir is ignored" "$out" "STUB claude --continue"
+
+# Docker for the agent (agents/docker.sh): a stub remote-docker logs its calls; the claude stub shows DOCKER_HOST.
+dstubs=$(mktemp -d)
+cat >"$dstubs/claude" <<'STUB'
+#!/bin/sh
+echo "STUB claude DH=${DOCKER_HOST:-none} TOKEN=${AGENTS_DOCKER_TOKEN:-unset} $*"
+STUB
+cat >"$dstubs/remote-docker" <<'STUB'
+#!/bin/bash
+echo "[state=${REMOTE_DOCKER_STATE_DIR##*/}] $*" >>"$STUB_LOG"
+case "$1 $2" in
+    "remote token") [ -z "${STUB_MINT_FAIL:-}" ] || { echo refused >&2; exit 1; }
+        printf 'docker remote create ws --token rdt1.minted.secret\nsingle use, for account alice\n' ;;
+    "remote create") touch "$REMOTE_DOCKER_STATE_DIR/id_ed25519"; echo known >"$REMOTE_DOCKER_STATE_DIR/known_hosts"
+        echo '{"workspaces":{"aw":{"host":"h","user":"alice"}}}' >"$HOME/.remote-docker.json"; echo added ;;
+    "remote start") echo started ;;
+    "remote status") n=$(cat "$STUB_COUNT" 2>/dev/null || echo 0); echo $((n + 1)) >"$STUB_COUNT"
+        [ "${STUB_READY_AFTER:-0}" != never ] && [ "$n" -ge "${STUB_READY_AFTER:-0}" ] ;;
+    "remote key") if [ "$3" = ls ]; then printf 'FINGERPRINT  COMMENT  DIRECTORY\nSHA256:other  x  d\nSHA256:mine  c  d  this machine\n'; else echo removed; fi ;;
+    "remote stop") echo stopped ;;
+esac
+STUB
+chmod +x "$dstubs/claude" "$dstubs/remote-docker"
+export STUB_LOG=$dstubs/calls STUB_COUNT=$dstubs/count
+dock() { # env assignments...: starts claude through start.sh with the stubs
+    rm -f "$HOME/.remote-docker.json" "$STUB_LOG" "$STUB_COUNT"
+    env PATH="$dstubs:$PATH" AGENTS_HARNESS_FILE=/opt/agents/claude/harness.sh AGENTS_AUTORESUME=no \
+        AGENTS_DOCKER_SEED="$seed" "$@" bash "$start" claude </dev/null 2>&1
+}
+calls() { cat "$STUB_LOG" 2>/dev/null; }
+seed=$(mktemp -d)/seed
+TOKEN='docker remote create ws --token rdt1.seedtoken.xyz'
+
+out=$(dock);                             check "docker: unset: the harness starts without DOCKER_HOST" "$out" "DH=none"
+check "docker: unset: remote-docker is never called" "$(calls)" "[" no
+out=$(dock AGENTS_DOCKER=remote-docker); check "docker: not enrolled, no token: a hint" "$out" "not enrolled; continuing without Docker"
+check "docker: not enrolled: the harness still starts" "$out" "STUB claude DH=none"
+check "docker: not enrolled: one hint line" "$(grep -c 'not enrolled' <<<"$out")" "1"
+check "docker: not enrolled: remote-docker is never called" "$(calls)" "[" no
+
+out=$(STUB_READY_AFTER=2 dock AGENTS_DOCKER=remote-docker AGENTS_DOCKER_TOKEN="$TOKEN")
+check "docker: the seed is enrolled once and says so" "$out" "enrolled; you can remove AGENTS_DOCKER_TOKEN from .env"
+check "docker: the token is not printed" "$out" "rdt1." no
+check "docker: the seed enrolment used the token" "$(calls)" "[state=seed] remote create aw --token rdt1.seedtoken.xyz"
+check "docker: the seed mints the container's token" "$(calls)" "[state=seed] remote token create --note $HOSTNAME"
+check "docker: the container enrols its own key" "$(calls)" "[state=state] remote create aw --token rdt1.minted.secret"
+check "docker: the session is started" "$(calls)" "remote start"
+check "docker: waits for the workspace (three status calls)" "$(grep -c 'remote status' "$STUB_LOG")" "3"
+check "docker: DOCKER_HOST is the container's socket" "$out" "STUB claude DH=unix:///tmp/remote-docker."
+check "docker: the harness does not see the token" "$out" "TOKEN=unset"
+check "docker: the session ends after the harness" "$(calls)" "remote stop -f"
+check "docker: the container's own key is removed" "$(calls)" "[state=state] remote key rm SHA256:mine -f"
+check "docker: the seed is marked enrolled" "$([ -e "$seed/enrolled" ] && echo yes)" "yes"
+check "docker: the seed keeps the workspace config" "$(cat "$seed/remote-docker.json")" '"host":"h"'
+
+out=$(dock AGENTS_DOCKER=remote-docker AGENTS_DOCKER_TOKEN="$TOKEN")
+check "docker: an enrolled seed ignores the token" "$(calls)" "--token rdt1.seedtoken" no
+check "docker: an enrolled seed does not announce it again" "$out" "enrolled; you can" no
+check "docker: a second run still starts a session" "$out" "STUB claude DH=unix://"
+check "docker: the second run reads the seed's workspace config" "$([ -f "$HOME/.remote-docker.json" ] && echo yes)" "yes"
+
+out=$(STUB_READY_AFTER=never dock AGENTS_DOCKER=remote-docker AGENTS_DOCKER_TIMEOUT=2)
+check "docker: timeout is reported" "$out" "did not answer within 2s"
+check "docker: after a timeout the harness starts without Docker" "$out" "STUB claude DH=none"
+check "docker: after a timeout the key is removed" "$(calls)" "remote key rm SHA256:mine -f"
+check "docker: no scratch dir is left behind" "$(find /tmp -maxdepth 1 -name 'remote-docker.*' | wc -l | tr -d ' ')" "0"
+
+out=$(STUB_MINT_FAIL=1 dock AGENTS_DOCKER=remote-docker)
+check "docker: a refused token is reported" "$out" "minting a token failed"
+check "docker: a refused token still starts the harness" "$out" "STUB claude DH=none"
+
+ld2=$(mktemp -d)
+# shellcheck disable=SC2016 # the child shell expands it
+printf '%s\0' sh -c 'echo "EXEC DH=$DOCKER_HOST"; exit 7' >"$ld2/args"
+: >"$ld2/exec"
+out=$(dock AGENTS_DOCKER=remote-docker AGENTS_LAUNCH_DIR="$ld2"); code=$?
+check "docker: --exec gets DOCKER_HOST too" "$out" "EXEC DH=unix:///tmp/remote-docker."
+check "docker: --exec keeps the command's exit status" "$code" "7"
+check "docker: --exec ends the session and removes the key" "$(calls)" "remote key rm SHA256:mine -f"
 exit $fail

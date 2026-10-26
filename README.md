@@ -72,6 +72,7 @@ agents/<harness>/harness.sh    what the scripts need to know about the harness: 
 agents/launch.sh               options, harness menu and shared/.last-harness; runs in the base image on every launch
 agents/start.sh                resumes or starts the agent (AGENTS_AUTORESUME), in the harness container
 agents/menu.sh                 arrow-key menu, used by launch.sh and start.sh
+agents/docker.sh               Docker for the agent (AGENTS_DOCKER): enrols a key per container and runs the remote-docker session
 agents/hermes/entrypoint.sh    copies hermes state around each run (see Hermes state)
 agents/run.*                   host side of the launcher, one file per OS: .env, workspace path, image pull/build, docker compose
 run-agent.*                    one-line launchers
@@ -79,7 +80,7 @@ install.*, uninstall.*         the `agent-workspace` command and Explorer entry 
 compose.yaml                   base service plus one service per harness
 .env.example                   template for .env
 tests/                         CI smoke test (agent starts), launch.sh, start.sh, run.sh, run.bat and install tests
-shared/                        local, gitignored: git config + credentials, AGENTS.md
+shared/                        local, gitignored: git config + credentials, AGENTS.md, remote-docker seed key
 workspace/                     default workspace
 docs/adr/                      design decisions
 renovate.json                  dependency updates
@@ -106,9 +107,29 @@ A folder `agents/<name>/` with a `Dockerfile` (`FROM` the base image) and a `har
 - `AGENTS_WORKSPACE_CONSISTENCY`: mount consistency options for the workspace, passed to Docker as is (e.g. for remote Docker with caching mounts). Empty means Docker's default.
 - `AGENTS_AUTORESUME`: `ask` (default, also when empty) offers to resume the last conversation for the workspace folder with an arrow-key menu (or to choose another one in the harness's own picker; opencode has none at startup, use `/sessions` there), `yes` resumes without asking, `no` always starts fresh (any case). It only applies when the harness has a conversation for this folder, and `--new` starts fresh. `pick` (the launcher's `--sessions`) opens the harness's session picker instead. The launcher's `--continue`, `--new`, `--sessions` and `--ask` override this setting. The workspace is mounted at its host path (`C:\code\foo` becomes `/c/code/foo`) so conversations are kept per folder; use `/clear`, `/new` or the harness's own picker (`claude --resume`, `pi --resume`, `hermes sessions browse`, `cline history`) for older ones. Conversations stored earlier under `/workspace` don't resume.
 - `AGENTS_HARNESS`: the harness to run when none is given on the command line (a flag or positional harness wins); with it the menu never shows. Shell beats `.env`, so it can be set system-wide.
+- `AGENTS_DOCKER`, `AGENTS_DOCKER_TOKEN`, `AGENTS_DOCKER_TIMEOUT`: Docker for the agents, see [Docker inside the agents](#docker-inside-the-agents).
 - `AGENTS_NONINTERACTIVE`: any non-empty value is `-y`: no menu is ever shown. Shell beats `.env`.
 - Plain `docker compose run <harness>` (without a launcher) works only after one launcher run created `shared/.launch`; it then starts the harness without arguments, resuming as `AGENTS_AUTORESUME` says, and keeps `/workspace`.
 - `compose.override.yaml`: your own compose tweaks (extra mounts, ports). Gitignored, merged automatically.
+
+## Docker inside the agents
+
+Off by default. With `AGENTS_DOCKER=remote-docker` the agent gets `docker` and `docker compose` (no `buildx`; `docker build` works) through a [remote-docker](https://github.com/lhns/remote-docker) workspace: bind mounts of the workspace folder work (through an extra NFS hop), and published ports (`-p 8080:80`) appear on the agent container's own localhost. It needs no privileges for the agent container. See [ADR 24](docs/adr/0024-docker-for-agents-through-remote-docker.md).
+
+Setup:
+
+1. You need a remote-docker workspace reachable from the containers: an `ssh://`, `ws://` or `wss://` address. A local `remote machine` workspace (WSL, Hyper-V) does not work from a container. Your account on it must be allowed to create tokens (`WORKSPACE_USER_TOKENS`, true by default).
+2. On your computer, with remote-docker enrolled there: `remote-docker remote token create`. Put the `rdt1.…` token in `.env` as `AGENTS_DOCKER_TOKEN`, next to `AGENTS_DOCKER=remote-docker`. Add `REMOTE_DOCKER_HOST`, `REMOTE_DOCKER_USER` or `REMOTE_DOCKER_CA_FILE` only if the address in the token does not work from the container, or for a private CA. Any `REMOTE_DOCKER_*` setting works (it reaches every harness).
+3. Start an agent. The first start enrols a seed key in `shared/remote-docker/seed` and prints `enrolled; you can remove AGENTS_DOCKER_TOKEN from .env`. Remove the token; it is single use and expires after 24 hours. Later starts do not need it.
+
+How it works: the seed key only mints tokens. Every container enrols a fresh key of its own (its comment is `remote-docker-aw-<run id>-agent`), starts its own session, exports `DOCKER_HOST`, and removes the key when it exits. One key per container is needed because two sessions on one key collide on the workspace. Not enrolled, or the workspace does not answer within `AGENTS_DOCKER_TIMEOUT` (60) seconds: one line is printed and the agent starts without Docker.
+
+Things to know:
+
+- The agents act on your account. They see, stop and remove your containers and images, and containers started by agents keep running after the agent exits. Anyone who can read `shared/remote-docker` can mint keys for the account; revoke the seed by removing its key.
+- Bind mounts only work for paths that exist inside the agent container (the workspace, `/tmp`).
+- Compose project names default to the folder name, so an agent and you in the same project share compose projects (and two agent containers in one folder do too). Set `COMPOSE_PROJECT_NAME` where that matters.
+- A killed container (`docker kill`, a crash) leaves its key behind. List them on your computer with `remote-docker remote key ls` (stale ones have `aw-` in the comment and are not marked "this machine"; the seed's public key is in `shared/remote-docker/seed/id_ed25519.pub`, keep that one) and remove with `remote-docker remote key rm <fingerprint>`.
 
 ## Git
 

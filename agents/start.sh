@@ -12,13 +12,34 @@
 set -u
 h=${1:?usage: agents-start.sh <harness>}
 
+# docker_up / docker_down: Docker for the agent when AGENTS_DOCKER is set (agents/docker.sh).
+# shellcheck source=agents/docker.sh
+. "${AGENTS_DOCKER_FILE:-/usr/local/lib/agents-docker.sh}"
+
+# Starts the command in place of this script. With a Docker session it runs as a child instead, so the
+# session and this container's key can be ended after it; SIGTERM (docker stop) is passed on.
+launch_cmd() {
+    docker_up
+    [ -n "$docker_active" ] || exec "$@"
+    "$@" <&0 &
+    local child=$! status
+    trap 'kill -TERM "$child" 2>/dev/null' TERM HUP
+    trap : INT
+    while true; do
+        wait "$child"; status=$?
+        kill -0 "$child" 2>/dev/null || break
+    done
+    docker_down
+    exit "$status"
+}
+
 launch=${AGENTS_LAUNCH_DIR:-/opt/launch/${AGENTS_RUN_ID:-none}}
 args=()
 mode=${AGENTS_AUTORESUME:-}
 if [ -d "$launch" ]; then
     [ ! -f "$launch/args" ] || while IFS= read -r -d '' a; do args+=("$a"); done <"$launch/args"
     # --exec: run the command instead of the harness (still inside compose's entrypoint).
-    if [ -e "$launch/exec" ]; then exec "${args[@]}"; fi
+    if [ -e "$launch/exec" ]; then launch_cmd "${args[@]}"; fi
     [ ! -f "$launch/mode" ] || mode=$(<"$launch/mode")
     [ ! -e "$launch/noninteractive" ] || AGENTS_NONINTERACTIVE=1
 fi
@@ -77,4 +98,4 @@ elif [ "$mode" != no ] && find_session; then
         esac
     fi
 fi
-exec "${cmd[@]}" ${args[@]+"${args[@]}"}
+launch_cmd "${cmd[@]}" ${args[@]+"${args[@]}"}

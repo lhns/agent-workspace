@@ -43,6 +43,7 @@ rem State dirs, so docker doesn't create them as root. The launch dir is made he
 rem container) so this script can delete it afterwards.
 set "AGENTS_RUN_ID=%RANDOM%%RANDOM%"
 if not exist shared\git mkdir shared\git
+if not exist shared\remote-docker mkdir shared\remote-docker
 if not exist shared\.launch\%AGENTS_RUN_ID% mkdir shared\.launch\%AGENTS_RUN_ID%
 if not exist shared\AGENTS.md type nul > shared\AGENTS.md
 rem Leftovers of a killed launcher (Ctrl-C ends a batch file without cleanup).

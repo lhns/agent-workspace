@@ -21,6 +21,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         zip \
     && rm -rf /var/lib/apt/lists/*
 
+# The remote-docker client is the docker CLI (with compose) plus a session that serves the workspace
+# to a remote Docker daemon; agents/docker.sh starts it when AGENTS_DOCKER is set (ADR 24).
+# renovate: datasource=github-releases depName=lhns/remote-docker
+ARG REMOTE_DOCKER_VERSION=v0.16.1
+RUN set -eu; \
+    file="remote-docker_${REMOTE_DOCKER_VERSION#v}_linux_$(dpkg --print-architecture).tar.gz"; \
+    url="https://github.com/lhns/remote-docker/releases/download/${REMOTE_DOCKER_VERSION}"; \
+    cd /tmp; \
+    curl -fsSLO "$url/$file"; \
+    curl -fsSLO "$url/checksums.txt"; \
+    grep " $file\$" checksums.txt | sha256sum -c -; \
+    tar -xzf "$file" --no-same-owner -C /usr/local/bin remote-docker; \
+    ln -s remote-docker /usr/local/bin/docker; \
+    rm -f "$file" checksums.txt
+
 # Bind mounts from Docker Desktop show up owned by another user; without this git refuses them.
 RUN git config --system --add safe.directory '*'
 

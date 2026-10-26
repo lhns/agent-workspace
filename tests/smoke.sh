@@ -33,6 +33,10 @@ fi
 echo "== $h: --version"
 "$bin" --version || bad "$bin --version exited $?"
 
+echo "== $h: docker and compose are installed"
+docker --version || bad "docker --version exited $?"
+docker compose version || bad "docker compose version exited $?"
+
 echo "== $h: state dir $state writable"
 if touch "$state/.smoke" 2>/dev/null; then rm -f "$state/.smoke"; else bad "$state not writable"; fi
 
