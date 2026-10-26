@@ -178,7 +178,7 @@ echo "[state=${REMOTE_DOCKER_STATE_DIR##*/}] $*" >>"$STUB_LOG"
 case "$1 $2" in
     "remote token") [ -z "${STUB_MINT_FAIL:-}" ] || { echo refused >&2; exit 1; }
         printf 'docker remote create ws --token rdt1.minted.secret\nsingle use, for account alice\n' ;;
-    "remote create") touch "$REMOTE_DOCKER_STATE_DIR/id_ed25519"; echo known >"$REMOTE_DOCKER_STATE_DIR/known_hosts"
+    "remote create") [ -z "${STUB_SLOW_ENROL:-}" ] || sleep 2; touch "$REMOTE_DOCKER_STATE_DIR/id_ed25519"; echo known >"$REMOTE_DOCKER_STATE_DIR/known_hosts"
         echo '{"workspaces":{"aw":{"host":"h","user":"alice"}}}' >"$HOME/.remote-docker.json"; echo added ;;
     "remote start") echo started ;;
     "remote status") n=$(cat "$STUB_COUNT" 2>/dev/null || echo 0); echo $((n + 1)) >"$STUB_COUNT"
@@ -235,6 +235,18 @@ check "docker: no scratch dir is left behind" "$(find /tmp -maxdepth 1 -name 're
 out=$(STUB_MINT_FAIL=1 dock AGENTS_DOCKER=remote-docker)
 check "docker: a refused token is reported" "$out" "minting a token failed"
 check "docker: a refused token still starts the harness" "$out" "STUB claude DH=none"
+
+# Two containers starting together with the same token: one enrols the seed, the other uses it.
+seed=$(mktemp -d)/seed; rm -f "$HOME/.remote-docker.json" "$STUB_LOG" "$STUB_COUNT"
+for i in 1 2; do
+    env PATH="$dstubs:$PATH" AGENTS_HARNESS_FILE=/opt/agents/claude/harness.sh AGENTS_AUTORESUME=no STUB_SLOW_ENROL=1 \
+        AGENTS_DOCKER_SEED="$seed" AGENTS_DOCKER=remote-docker AGENTS_DOCKER_TOKEN='rdt1.a.b*c/d&e' \
+        bash "$start" claude </dev/null >"$dstubs/race$i" 2>&1 &
+done
+wait
+check "docker: concurrent starts spend the seed token once" "$(grep -c '\[state=seed\] remote create' "$STUB_LOG")" "1"
+check "docker: concurrent starts both get Docker" "$(cat "$dstubs"/race1 "$dstubs"/race2 | grep -c 'DH=unix://')" "2"
+check "docker: the token is not printed, metacharacters or not" "$(cat "$dstubs"/race1 "$dstubs"/race2)" "rdt1.a" no
 
 ld2=$(mktemp -d)
 # shellcheck disable=SC2016 # the child shell expands it

@@ -14,12 +14,15 @@ h=${1:?usage: agents-start.sh <harness>}
 
 # docker_up / docker_down: Docker for the agent when AGENTS_DOCKER is set (agents/docker.sh).
 # shellcheck source=agents/docker.sh
-. "${AGENTS_DOCKER_FILE:-/usr/local/lib/agents-docker.sh}"
+. /usr/local/lib/agents-docker.sh
 
 # Starts the command in place of this script. With a Docker session it runs as a child instead, so the
 # session and this container's key can be ended after it; SIGTERM (docker stop) is passed on.
 launch_cmd() {
+    # Stopped while waiting for the workspace: still remove the key.
+    trap 'docker_down; exit 143' TERM HUP INT
     docker_up
+    trap - TERM HUP INT
     [ -n "$docker_active" ] || exec "$@"
     "$@" <&0 &
     local child=$! status
@@ -44,8 +47,8 @@ if [ -d "$launch" ]; then
     [ ! -e "$launch/noninteractive" ] || AGENTS_NONINTERACTIVE=1
 fi
 
-# shellcheck disable=SC2317,SC2329 # launch_cmd never returns, so shellcheck thinks the rest is unreachable
 # Rows of a SQLite query, columns tab-separated; fails on a missing db, no rows or any error.
+# shellcheck disable=SC2329 # called from the harness.sh files, which shellcheck cannot follow from here
 sql() {
     [ -f "$1" ] || return 1
     python3 - "$@" <<'PY' 2>/dev/null
