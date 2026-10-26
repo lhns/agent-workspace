@@ -43,7 +43,7 @@ PY
 
 # choose(): arrow-key menu, shared with launch.sh.
 # shellcheck source=agents/menu.sh
-. "${AGENTS_MENU:-/usr/local/lib/agents-menu.sh}"
+. /usr/local/lib/agents-menu.sh
 
 raw=$mode
 mode=$(tr '[:upper:]' '[:lower:]' <<<"$mode")

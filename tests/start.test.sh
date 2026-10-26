@@ -4,7 +4,7 @@
 # The harness binaries are stubs that print their arguments; HOME is a scratch directory. The mounted
 # agents/ gives every harness's harness.sh, not only the container's own.
 set -u
-start=${START:-/usr/local/lib/agents-start.sh}
+start=/usr/local/lib/agents-start.sh
 fail=0
 check() { # name, command output, expected substring, "no" to expect its absence
     if [ "${4:-}" = no ]; then

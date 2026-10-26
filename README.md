@@ -10,7 +10,19 @@ Harnesses: `claude` (Claude Code), `opencode`, `pi`, `cline`, `hermes`. Docker w
 |---|---|
 | `run-agent.bat [--workdir DIR] [options] [harness] [harness args...]` | `./run-agent.sh [--workdir DIR] [options] [harness] [harness args...]` |
 
-With a harness (`claude`, `opencode`, `pi`, `cline`, `hermes`) that agent starts. Without one, an arrow-key menu picks it (Up/Down, Enter, Ctrl-C to quit), with the harness you used last in this workspace folder first, else the last used anywhere, then the others alphabetically, remembered in `shared/.last-harness`. Without a terminal and without a harness, the last used one starts. The options and the menu run in a container from the base image, so they behave the same on Windows and Linux. That container starts on every launch, even with a harness named, and adds about 3 seconds on Docker Desktop for Windows; `--help` and option errors need Docker running too. Everything after the harness goes to the agent, e.g. `./run-agent.sh claude --model sonnet`; after `--` alone the menu still picks the harness: `./run-agent.sh -- --model sonnet`. The arguments come after the launcher's own resume arguments (`claude --continue --model sonnet`).
+### Choosing the harness
+
+With a harness (`claude`, `opencode`, `pi`, `cline`, `hermes`) that agent starts. Without one, an arrow-key menu picks it (Up/Down, Enter, Ctrl-C to quit), with the harness you used last in this workspace folder first, else the last used anywhere, then the others alphabetically, remembered in `shared/.last-harness`. Without a terminal and without a harness, the last used one starts.
+
+### Arguments for the agent
+
+Everything after the harness goes to the agent, e.g. `./run-agent.sh claude --model sonnet`; after `--` alone the menu still picks the harness: `./run-agent.sh -- --model sonnet`. The arguments come after the launcher's own resume arguments (`claude --continue --model sonnet`).
+
+### Where the options run
+
+The options and the menu run in a container from the base image, so they behave the same on Windows and Linux. That container starts on every launch, even with a harness named, and adds about 3 seconds on Docker Desktop for Windows; `--help` and option errors need Docker running too.
+
+### Options
 
 Options go before the harness (`./run-agent.sh -h` lists them):
 
@@ -26,11 +38,15 @@ Options go before the harness (`./run-agent.sh -h` lists them):
 | `--exec CMD [ARGS...]` | run CMD in the harness container instead of the agent, e.g. a shell: `./run-agent.sh --harness claude --exec bash` |
 | `-h`, `--help` | usage |
 
+### Notes
+
 Option parsing stops at the first argument that is not an option or at `--`. An unknown option before the harness is an error; put `--` before arguments meant for the agent. The launcher does not detect the agent's own session flags: pass `--new` when you supply your own session flags, e.g. `./run-agent.sh --new claude --resume <id>`; otherwise a resume menu or `--continue` may come first.
 
 Breaking changes: the per-harness launchers are gone; `run-claude.sh` is now `./run-agent.sh claude` (likewise `run-claude.bat` and the other harnesses). Arguments after the harness now go to the agent instead of replacing its command: `run-agent claude bash` passes `bash` to claude; use `--exec` for a shell or any other command.
 
 On Windows, `%` in arguments is expanded by cmd (twice, via the root launcher). `--harness=NAME` is not recognized on either OS (use a space).
+
+### First run and images
 
 The first run creates `.env` from `.env.example` and stops until you edit it (uncomment the keys you use).
 

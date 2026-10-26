@@ -17,7 +17,7 @@
 # AGENTS_HARNESS, AGENTS_NONINTERACTIVE (non-empty = -y), AGENTS_WORKSPACE_TARGET, AGENTS_RUN_ID.
 # Exit 0: done (launch if `result` says so), 130: Ctrl-C in the menu, else an error already printed.
 set -u
-dir=${AGENTS_DIR:-/opt/agents}
+dir=/opt/agents
 shared=${AGENTS_SHARED:-/opt/shared}
 # shellcheck source=agents/menu.sh
 . "$dir/menu.sh"
