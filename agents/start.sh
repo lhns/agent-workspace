@@ -48,7 +48,7 @@ if [ -d "$launch" ]; then
 fi
 
 # Rows of a SQLite query, columns tab-separated; fails on a missing db, no rows or any error.
-# shellcheck disable=SC2329 # called from the harness.sh files, which shellcheck cannot follow from here
+# shellcheck disable=SC2317,SC2329 # (SC2317 on older shellcheck) called from the harness.sh files, which shellcheck cannot follow from here
 sql() {
     [ -f "$1" ] || return 1
     python3 - "$@" <<'PY' 2>/dev/null
