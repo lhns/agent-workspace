@@ -44,6 +44,7 @@ if [ -d "$launch" ]; then
     [ ! -e "$launch/noninteractive" ] || AGENTS_NONINTERACTIVE=1
 fi
 
+# shellcheck disable=SC2317,SC2329 # launch_cmd never returns, so shellcheck thinks the rest is unreachable
 # Rows of a SQLite query, columns tab-separated; fails on a missing db, no rows or any error.
 sql() {
     [ -f "$1" ] || return 1
