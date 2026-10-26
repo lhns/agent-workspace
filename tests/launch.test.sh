@@ -4,7 +4,7 @@
 # The state and the launch dir are scratch ones; the result is read back from the files it writes,
 # as the host launchers do.
 set -u
-core=${CORE:-/opt/agents/launch.sh}
+core=/opt/agents/launch.sh
 export AGENTS_SHARED=/tmp/aw-launch-shared AGENTS_RUN_ID=t1
 state=$AGENTS_SHARED/.last-harness
 launch=$AGENTS_SHARED/.launch/$AGENTS_RUN_ID

@@ -10,6 +10,7 @@ if [ "${1:-}" = --workdir ]; then
     [ $# -ge 2 ] || { echo "--workdir needs a folder" >&2; exit 1; }
     [ -d "$2" ] || { echo "--workdir '$2' does not exist" >&2; exit 1; }
     WORKSPACE_DIR=$(cd "$2" && pwd -P)
+    export WORKSPACE_DIR # compose reads it for the mount source
 fi
 cd "$(dirname "$0")/.."
 

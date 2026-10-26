@@ -20,6 +20,7 @@ echo "$*" >> "$STUB_LOG"
 if [ "${1:-}" = compose ] && [ "${2:-}" = run ]; then
     echo "$AGENTS_WORKSPACE_TARGET" >> "$STUB_LOG.target"
     echo "$AGENTS_RUN_ID" >> "$STUB_LOG.id"
+    echo "${WORKSPACE_DIR:-}" >> "$STUB_LOG.ws"
     shift 2
     while [ $# -gt 0 ] && [ "$1" != base ]; do shift; done
     if [ "${1:-}" = base ]; then
@@ -129,6 +130,7 @@ mkdir -p "$work/other/sub dir"
 rm -f "$STUB_LOG" "$STUB_LOG".*
 out=$(cd "$work/other" && bash "$work/agents/run.sh" --workdir 'sub dir' claude --model x </dev/null 2>&1); code=$?
 check "--workdir resolves against the caller's folder" "$([ "$code" = 0 ] && [ "$(head -n1 "$STUB_LOG.target")" = "$(cd "$work/other/sub dir" && pwd -P)" ]; echo $?)"
+check "--workdir is exported for compose's mount source" "$([ "$(head -n1 "$STUB_LOG.ws")" = "$(cd "$work/other/sub dir" && pwd -P)" ]; echo $?)"
 check "--workdir is passed to the core untouched" "$([ "$(log base)" = '[--workdir][sub dir][claude][--model][x]' ]; echo $?)"
 mkdir -p "$work/shellws"
 WORKSPACE_DIR="$work/shellws" run --workdir "$work/my proj" claude
