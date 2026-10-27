@@ -61,7 +61,7 @@ The workspace is the folder you start in, not only the one in `.env`. Run `insta
 
 Any launcher also takes the folder as an argument: `./run-agent.sh --workdir ~/code/foo claude`. An explicit `--workdir` beats the command's current folder, which beats a `WORKSPACE_DIR` in the shell, which beats `.env`. A relative `--workdir` is relative to where you run it; a relative `WORKSPACE_DIR` in the shell is relative to this repo, so use an absolute one.
 
-The command holds the path of this repo: after moving it, run the install script again. Running it on an existing install asks `[U]pdate / [r]emove / [c]ancel` (Enter updates; without a terminal it updates). `install.bat -Update` / `./install.sh --update` skip the question. `uninstall.bat` / `./uninstall.sh` remove everything the install wrote and say what they removed.
+The command holds the path of this repo: after moving it, run the install script again. Running it on an existing install asks `[U]pdate / [r]emove / [c]ancel` (Enter updates; without a terminal it updates). `install.bat -Update` / `./install.sh --update` skip the question. `uninstall.bat` / `./uninstall.sh` remove everything the install wrote and say what they removed. `install.bat` is plain batch (reg.exe, setx), no PowerShell script, so a machine policy that only allows signed scripts (`AllSigned`) doesn't block it.
 
 ## Layout
 
@@ -76,7 +76,7 @@ agents/docker.sh               Docker for the agent (AGENTS_DOCKER): enrols a ke
 agents/hermes/entrypoint.sh    copies hermes state around each run (see Hermes state)
 agents/run.*                   host side of the launcher, one file per OS: .env, workspace path, image pull/build, docker compose
 run-agent.*                    one-line launchers
-install.*, uninstall.*         the `agent-workspace` command and Explorer entry (agents/install.ps1 does the Windows work)
+install.*, uninstall.*         the `agent-workspace` command and Explorer entry (install.bat does all the Windows work itself, uninstall.bat calls it with -Uninstall)
 compose.yaml                   base service plus one service per harness
 .env.example                   template for .env
 tests/                         CI smoke test (agent starts), launch.sh, start.sh, run.sh, run.bat and install tests
