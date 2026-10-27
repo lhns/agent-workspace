@@ -52,7 +52,9 @@ if not defined REGROOT set "REGROOT=HKCU\Software\Classes"
 set "BINT=%BIN%"
 if "%BINT:~-1%"=="\" set "BINT=%BINT:~0,-1%"
 
-rem Can reg.exe be used? With DisableRegistryTools even a query fails.
+rem Can reg.exe be used? Assumption: with DisableRegistryTools even a read-only query fails, so a
+rem succeeding query means writes work too. If a policy only blocks writes, the first failing write
+rem is caught below: what was written is undone and the fallback runs.
 set "REGOK="
 if defined AW_INSTALL_NOREG if not "%AW_INSTALL_NOREG%"=="add" goto :probed
 reg query "HKCU\Environment" >nul 2>&1
@@ -105,7 +107,7 @@ if exist "%WA%\" if defined ONPATH set "WAOK=1"
 if defined WAOK set "SHIM=%WASHIM%"
 if defined WAOK call :rmfile "%BINSHIM%"
 if not defined WAOK if not exist "%BIN%\" mkdir "%BIN%"
-if defined WAOK if not "%BINSHIM%"=="%WASHIM%" rd "%BIN%" 2>nul
+if defined WAOK rd "%BIN%" 2>nul
 call :writeshim
 if errorlevel 1 exit /b 1
 set "MSG=Installed %SHIM% -> %REPO%"
@@ -150,15 +152,17 @@ exit /b 0
 rem Removes everything either mode wrote, whatever exists. Without reg.exe the registry parts are skipped.
 :uninstall
 set "ANY="
+set "URC=0"
 call :rmfile "%BINSHIM%"
 if defined ANY set "BINGONE=1"
 rd "%BIN%" 2>nul
 call :rmfile "%WASHIM%"
 call :rmfile "%STFILE%"
 if defined REGOK call :rmregparts
+if defined REGOK if errorlevel 1 set "URC=1"
 if not defined REGOK if defined BINGONE echo reg.exe is disabled here: a user PATH entry and Explorer entries from a registry-mode install could not be checked or removed
 if not defined ANY echo agent-workspace is not installed
-exit /b 0
+exit /b %URC%
 
 rem The user PATH entry and the Explorer keys.
 :rmregparts
@@ -284,15 +288,20 @@ reg add "!K!\command" /ve /d "!CMDV!" /f >nul
 if errorlevel 1 exit /b 1
 exit /b 0
 
-rem The Send to entry: opens the selected folder (the folder of a selected file) in a terminal.
+rem The Send to entry: opens a terminal in the selected folder, or in a selected file's folder. Send to
+rem passes every selected item as an argument; only the first is used (one terminal, no window flood).
+rem Without an argument it uses the current folder. Quotes keep & ( ) in paths literal; ^&^& reaches
+rem the new cmd as && (written with carets so the batch file itself doesn't split at it). With wt.exe
+rem there is no start: wt hands over to Windows Terminal and returns at once.
 :writesendto
 setlocal enableDelayedExpansion
 set "AMP=^&^&"
 >"!STFILE!" echo @echo off
 >>"!STFILE!" echo setlocal
 >>"!STFILE!" echo set "D=%%~1"
+>>"!STFILE!" echo if not defined D set "D=%%CD%%"
 >>"!STFILE!" echo if not exist "%%D%%\" for %%%%F in ("%%D%%") do set "D=%%%%~dpF"
 >>"!STFILE!" echo if not "%%D:~-1%%"=="\" set "D=%%D%%\"
 if /i "!WT!"=="none" >>"!STFILE!" echo start "" cmd /k pushd "%%D%%" !AMP! "!SHIM!"
-if /i not "!WT!"=="none" >>"!STFILE!" echo !WT! -d "%%D%%." cmd /k "!SHIM!"
+if /i not "!WT!"=="none" >>"!STFILE!" echo "!WT!" -d "%%D%%." cmd /k "!SHIM!"
 exit /b 0

@@ -12,7 +12,7 @@ $repo = "$work\re po & (x)!"
 New-Item -ItemType Directory $repo | Out-Null
 Copy-Item "$src\install.bat", "$src\uninstall.bat" $repo
 # The stub launcher the shim calls.
-Set-Content "$repo\run-agent.bat" -Encoding ASCII -Value '@echo WS=%WORKSPACE_DIR%', '@echo ARGS=%*'
+Set-Content "$repo\run-agent.bat" -Encoding ASCII -Value '@echo "WS=%WORKSPACE_DIR%"', '@echo ARGS=%*'
 
 Remove-Item Env:AW_INSTALL_BIN_DIR, Env:AW_INSTALL_REG_ROOT, Env:AW_INSTALL_PATH_FILE, Env:AW_INSTALL_WT, Env:AW_INSTALL_WINAPPS, Env:AW_INSTALL_SENDTO, Env:AW_INSTALL_NOREG -ErrorAction SilentlyContinue
 # Fallback targets are always scratch folders, also with -Real.
@@ -111,14 +111,42 @@ try {
     Check 'fallback: exit 0, says it is without the registry' ($code -eq 0 -and $out.Contains('without the registry') -and $out.Contains("Installed $waShim -> $repo"))
     Check 'fallback: shim in WindowsApps, none in bin, no PATH entry, no registry keys' ((Test-Path $waShim) -and -not (Test-Path $shim) -and (Count-OnPath) -eq 0 -and (& $noRegKeys))
     $send = [IO.File]::ReadAllText($stFile)
-    Check 'fallback: SendTo entry starts the shim in the selected folder' ($send.Contains("set `"D=%~1`"`r`n") -and $send.Contains("cmd /k pushd `"%D%`" ^&^& `"$waShim`"`r`n") -and ($send -notmatch "[^`r]`n"))
+    Check 'fallback: SendTo entry starts the shim in the selected folder' ($send.Contains("set `"D=%~1`"`r`n") -and $send.Contains("if not defined D set `"D=%CD%`"`r`n") -and $send.Contains("cmd /k pushd `"%D%`" ^&^& `"$waShim`"`r`n") -and ($send -notmatch "[^`r]`n"))
     Invoke-Bat """$waShim"" x"
     Check 'fallback: the shim runs the launcher' ($code -eq 0 -and $out -like '*ARGS=x*')
     Invoke-Bat """$repo\install.bat"""
     Check 'fallback: install again updates' ($code -eq 0 -and $out -like '*Installed*')
-    $env:AW_INSTALL_WT = 'wt.exe'
+    # Run the generated SendTo script. Terminal windows are avoided: the cmd branch is run with
+    # `start "" cmd /k` swapped for `cmd /c` (same pushd && shim), the wt branch with a stub that records its arguments.
+    $sel = "$work\sel & (d)!\proj x"
+    New-Item -ItemType Directory $sel, "$work\other" | Out-Null
+    Set-Content "$sel\a file.txt" 'x'
+    $send = [IO.File]::ReadAllText($stFile)
+    Check 'fallback: SendTo uses start for the cmd branch' ($send.Contains('start "" cmd /k pushd'))
+    $sendRun = "$work\sendto-run.cmd"
+    [IO.File]::WriteAllText($sendRun, $send.Replace('start "" cmd /k', 'cmd /c'))
+    Invoke-Bat """$sendRun"" ""$sel"""
+    Check 'SendTo script, folder with spaces & ( ) !: shim runs with the folder as workspace' ($code -eq 0 -and $out -like "*WS=$sel*")
+    Invoke-Bat """$sendRun"" ""$sel\a file.txt"""
+    Check 'SendTo script, file selected: its folder is the workspace' ($code -eq 0 -and $out -like "*WS=$sel*")
+    Invoke-Bat """$sendRun"" ""$sel"" ""$work\other"""
+    Check 'SendTo script, several items: only the first is opened' ($code -eq 0 -and $out -like "*WS=$sel*" -and $out -notlike '*other*')
+    Push-Location "$work\other"
+    try { Invoke-Bat """$sendRun""" } finally { Pop-Location }
+    Check 'SendTo script, no argument: the current folder' ($code -eq 0 -and $out -like "*WS=$work\other*")
+
+    $stub = "$work\stub wt & (w).cmd"
+    $rec = "$work\wt-args.txt"
+    Set-Content $stub -Encoding ASCII -Value '@echo off', '>"%AW_REC%" echo(%*'
+    $env:AW_REC = $rec
+    $env:AW_INSTALL_WT = $stub
     Invoke-Bat """$repo\install.bat"""
-    Check 'fallback with Windows Terminal: SendTo uses wt.exe -d' ([IO.File]::ReadAllText($stFile).Contains("wt.exe -d `"%D%.`" cmd /k `"$waShim`"`r`n"))
+    $send = [IO.File]::ReadAllText($stFile)
+    Check 'fallback with a terminal: SendTo calls it as wt -d folder cmd /k shim' ($send.Contains("`"$stub`" -d `"%D%.`" cmd /k `"$waShim`"`r`n"))
+    Invoke-Bat """$stFile"" ""$sel\a file.txt"""
+    $args1 = (Get-Content $rec -Raw).Trim()
+    Check 'SendTo script runs the terminal stub with -d "<folder>\." cmd /k "<shim>"' ($code -eq 0 -and $args1 -eq "-d `"$sel\.`" cmd /k `"$waShim`"")
+    Remove-Item Env:AW_REC
     $env:AW_INSTALL_WT = 'none'
     Invoke-Bat """$repo\uninstall.bat"""
     Check 'fallback uninstall (registry tools off): both files removed, no registry note' ($code -eq 0 -and -not (Test-Path $waShim) -and -not (Test-Path $stFile) -and $out.Contains("Removed $waShim") -and -not $out.Contains('reg.exe is disabled'))
