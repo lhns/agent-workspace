@@ -7,7 +7,8 @@ param([switch]$Real)
 $ErrorActionPreference = 'Stop'
 $src = (Resolve-Path "$PSScriptRoot\..").Path
 $work = Join-Path ([IO.Path]::GetTempPath()) "install-test-$PID"
-$repo = "$work\re po"
+# Spaces and & ( ) ! in the repo and shim paths: messages and generated files must not choke on them.
+$repo = "$work\re po & (x)!"
 New-Item -ItemType Directory $repo | Out-Null
 Copy-Item "$src\install.bat", "$src\uninstall.bat" $repo
 # The stub launcher the shim calls.
@@ -21,7 +22,7 @@ if ($Real) {
     if (Test-Path "$binDir\agent-workspace.cmd") { throw 'agent-workspace is installed on this machine; refusing to run -Real' }
     function Get-Path { [Environment]::GetEnvironmentVariable('Path', 'User') }
 } else {
-    $binDir = "$work\bin"
+    $binDir = "$work\bin & (y)!"
     $regRoot = "$regScratch\Classes"
     $pathFile = "$work\userpath.txt"
     # Entries with spaces, parentheses, & and an unexpanded variable must survive the round trip.
@@ -54,7 +55,7 @@ try {
 
     $env:AW_INSTALL_WT = 'none'
     Invoke-Bat """$repo\install.bat"""
-    Check 'install: exit 0' ($code -eq 0)
+    Check 'install: exit 0, messages print the paths verbatim' ($code -eq 0 -and $out.Contains("Installed $shim -> $repo") -and $out.Contains("Added $binDir to the user PATH") -and $out.Contains('Added the Explorer entry'))
     $text = [IO.File]::ReadAllText($shim)
     Check 'the shim calls the launcher with the current folder as the workspace, CRLF' ($text.Contains("set `"WORKSPACE_DIR=%CD%`"`r`n") -and $text.Contains("call `"$repo\run-agent.bat`" %*`r`n") -and ($text -notmatch "[^`r]`n"))
     Check 'the bin folder is on the user PATH once' ((Count-OnPath) -eq 1)
@@ -84,7 +85,7 @@ try {
     Check 'install from another folder re-points the shim' ($code -eq 0 -and ([IO.File]::ReadAllText($shim)).Contains("call `"$work\moved\run-agent.bat`""))
 
     Invoke-Bat """$repo\uninstall.bat"""
-    Check 'uninstall: exit 0, reports what it removed' ($code -eq 0 -and $out -like '*Removed*')
+    Check 'uninstall: exit 0, reports what it removed' ($code -eq 0 -and $out.Contains("Removed $shim") -and $out.Contains("Removed $binDir from the user PATH") -and $out.Contains('Removed ') -and $out -like '*shell\agent-workspace*')
     Check 'uninstall: shim, PATH entry and both registry keys are gone' (-not (Test-Path $shim) -and (Count-OnPath) -eq 0 -and -not (Test-Path -LiteralPath $keys[0]) -and -not (Test-Path -LiteralPath $keys[1]))
     if (-not $Real) { Check 'uninstall: other PATH entries are kept' ((Get-Path) -eq $seed) }
     Invoke-Bat """$repo\uninstall.bat"""

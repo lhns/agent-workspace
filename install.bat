@@ -15,7 +15,8 @@ rem   AW_INSTALL_BIN_DIR    shim folder            AW_INSTALL_REG_ROOT  registry
 rem   AW_INSTALL_PATH_FILE  file standing in for the user PATH   AW_INSTALL_WT  "none" or the wt.exe to use
 rem
 rem Delayed expansion is off, so ! in PATH entries survives; the subroutines that write paths into
-rem files and registry values turn it on and use !VAR!, so ) & in paths can't break parsing.
+rem files and registry values turn it on and use !VAR!, so ) & ! in paths can't break parsing.
+rem Messages go through a quoted set "MSG=..." and :say (echo of !MSG!), never echo %VAR% directly.
 setlocal disableDelayedExpansion
 set "MODE=install"
 if /i "%~1"=="-Update" set "MODE=update"
@@ -49,7 +50,8 @@ rem Install. The shim is CRLF in the OEM code page cmd reads batch files in (ech
 if not exist "%BIN%\" mkdir "%BIN%"
 call :writeshim
 if errorlevel 1 exit /b 1
-echo Installed %SHIM% -^> %REPO%
+set "MSG=Installed %SHIM% -> %REPO%"
+call :say
 
 call :getpath
 call :scan
@@ -57,7 +59,8 @@ if defined ONPATH goto :wt
 if defined NEWPATH (set "NEWPATH=%NEWPATH%;%BIN%") else set "NEWPATH=%BIN%"
 call :setpath
 if errorlevel 1 exit /b 1
-echo Added %BIN% to the user PATH (open a new terminal to use agent-workspace)
+set "MSG=Added %BIN% to the user PATH (open a new terminal to use agent-workspace)"
+call :say
 
 :wt
 rem wt.exe if there is one, else a plain cmd window.
@@ -78,7 +81,8 @@ if not exist "%SHIM%" goto :u_path
 del "%SHIM%"
 rem Only removes the folder if it is empty.
 rd "%BIN%" 2>nul
-echo Removed %SHIM%
+set "MSG=Removed %SHIM%"
+call :say
 set "ANY=1"
 :u_path
 call :getpath
@@ -86,7 +90,8 @@ call :scan
 if not defined ONPATH goto :u_reg
 call :setpath
 if errorlevel 1 exit /b 1
-echo Removed %BIN% from the user PATH
+set "MSG=Removed %BIN% from the user PATH"
+call :say
 set "ANY=1"
 :u_reg
 call :delkey "%REGROOT%\Directory\shell\agent-workspace"
@@ -98,7 +103,8 @@ exit /b 0
 reg query "%~1" >nul 2>&1
 if errorlevel 1 exit /b 0
 reg delete "%~1" /f >nul
-echo Removed %~1
+set "MSG=Removed %~1"
+call :say
 set "ANY=1"
 exit /b 0
 
@@ -115,6 +121,12 @@ set "ANS=%ANS:"=%"
 if /i "%ANS:~0,1%"=="r" set "MODE=uninstall"
 if /i "%ANS:~0,1%"=="u" exit /b 0
 if "%MODE%"=="install" set "MODE=cancel"
+exit /b 0
+
+rem Prints MSG; delayed expansion, so & ) ^ in paths are text, not syntax.
+:say
+setlocal enableDelayedExpansion
+echo(!MSG!
 exit /b 0
 
 rem User PATH -> PVAL (as stored, %VARS% unexpanded) and PTYPE.
@@ -156,24 +168,24 @@ reg delete "HKCU\Environment" /v AGENT_WORKSPACE_NOTIFY /f >nul 2>&1
 exit /b 0
 :setfile
 setlocal enableDelayedExpansion
->"%AW_INSTALL_PATH_FILE%" echo(!NEWPATH!
+>"!AW_INSTALL_PATH_FILE!" echo(!NEWPATH!
 exit /b 0
 
 rem The current folder becomes the workspace; an explicit --workdir still wins (run.bat applies it last).
 :writeshim
 setlocal enableDelayedExpansion
->"%SHIM%" echo @echo off
->>"%SHIM%" echo setlocal
->>"%SHIM%" echo set "WORKSPACE_DIR=%%CD%%"
->>"%SHIM%" echo call "!REPO!\run-agent.bat" %%*
+>"!SHIM!" echo @echo off
+>>"!SHIM!" echo setlocal
+>>"!SHIM!" echo set "WORKSPACE_DIR=%%CD%%"
+>>"!SHIM!" echo call "!REPO!\run-agent.bat" %%*
 exit /b 0
 
 rem One Explorer entry: name, icon, command. /k keeps the shell open after the agent exits, so errors
 rem stay readable. pushd also handles network folders. "%V." because wt mangles a trailing
 rem backslash (a drive root) before the closing quote. \" is reg's escape for a quote in /d.
 :regwrite
-setlocal enableDelayedExpansion
 set "K=%~1"
+setlocal enableDelayedExpansion
 set "AMP=&&"
 set "CMDV=cmd.exe /k pushd \"%%V\" !AMP! \"!SHIM!\""
 if /i not "!WT!"=="none" set "CMDV=!WT! -d \"%%V.\" cmd /k \"!SHIM!\""
