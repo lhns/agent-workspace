@@ -1,4 +1,4 @@
-# Tests install.bat / uninstall.bat (agents/install.ps1) on a temp copy of the repo with a stub launcher.
+# Tests install.bat / uninstall.bat on a temp copy of the repo with a stub launcher.
 # Default: a scratch target (shim folder, registry key and user-PATH file under the temp dir), so the
 # machine is not touched. With -Real (CI) it uses the real %LOCALAPPDATA%, HKCU\Software\Classes and
 # user PATH, and cleans up through uninstall.bat; it refuses to run if agent-workspace is installed.
@@ -8,9 +8,8 @@ $ErrorActionPreference = 'Stop'
 $src = (Resolve-Path "$PSScriptRoot\..").Path
 $work = Join-Path ([IO.Path]::GetTempPath()) "install-test-$PID"
 $repo = "$work\re po"
-New-Item -ItemType Directory "$repo\agents" | Out-Null
+New-Item -ItemType Directory $repo | Out-Null
 Copy-Item "$src\install.bat", "$src\uninstall.bat" $repo
-Copy-Item "$src\agents\install.ps1" "$repo\agents"
 # The stub launcher the shim calls.
 Set-Content "$repo\run-agent.bat" -Encoding ASCII -Value '@echo WS=%WORKSPACE_DIR%', '@echo ARGS=%*'
 
@@ -25,9 +24,11 @@ if ($Real) {
     $binDir = "$work\bin"
     $regRoot = "$regScratch\Classes"
     $pathFile = "$work\userpath.txt"
-    Set-Content $pathFile 'C:\Windows;C:\Tools' -Encoding ASCII
+    # Entries with spaces, parentheses, & and an unexpanded variable must survive the round trip.
+    $seed = 'C:\Windows;C:\Program Files (x86)\A & B;%SystemRoot%\x;C:\Tools'
+    Set-Content $pathFile $seed -Encoding ASCII
     $env:AW_INSTALL_BIN_DIR = $binDir
-    $env:AW_INSTALL_REG_ROOT = $regRoot
+    $env:AW_INSTALL_REG_ROOT = $regRoot.Replace(':', '')   # a reg.exe key path, not a PowerShell drive path
     $env:AW_INSTALL_PATH_FILE = $pathFile
     function Get-Path { (Get-Content $pathFile -Raw).Trim() }
 }
@@ -57,7 +58,7 @@ try {
     $text = [IO.File]::ReadAllText($shim)
     Check 'the shim calls the launcher with the current folder as the workspace, CRLF' ($text.Contains("set `"WORKSPACE_DIR=%CD%`"`r`n") -and $text.Contains("call `"$repo\run-agent.bat`" %*`r`n") -and ($text -notmatch "[^`r]`n"))
     Check 'the bin folder is on the user PATH once' ((Count-OnPath) -eq 1)
-    if (-not $Real) { Check 'existing PATH entries are kept' ((Get-Path) -like 'C:\Windows;C:\Tools;*') }
+    if (-not $Real) { Check 'existing PATH entries are kept' ((Get-Path) -eq "$seed;$binDir") }
     foreach ($k in $keys) {
         Check "registry: $($k.Split('\')[-3..-1] -join '\') name, icon, cmd command" ((Get-Item -LiteralPath $k).GetValue('') -eq 'Open with agent-workspace' -and (Get-Item -LiteralPath $k).GetValue('Icon') -eq 'cmd.exe' -and (Get-Cmd $k) -eq "cmd.exe /k pushd `"%V`" && `"$shim`"")
     }
@@ -85,7 +86,7 @@ try {
     Invoke-Bat """$repo\uninstall.bat"""
     Check 'uninstall: exit 0, reports what it removed' ($code -eq 0 -and $out -like '*Removed*')
     Check 'uninstall: shim, PATH entry and both registry keys are gone' (-not (Test-Path $shim) -and (Count-OnPath) -eq 0 -and -not (Test-Path -LiteralPath $keys[0]) -and -not (Test-Path -LiteralPath $keys[1]))
-    if (-not $Real) { Check 'uninstall: other PATH entries are kept' ((Get-Path) -eq 'C:\Windows;C:\Tools') }
+    if (-not $Real) { Check 'uninstall: other PATH entries are kept' ((Get-Path) -eq $seed) }
     Invoke-Bat """$repo\uninstall.bat"""
     Check 'uninstall again: not installed, exit 0' ($code -eq 0 -and $out -like '*not installed*')
 }
