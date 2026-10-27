@@ -14,7 +14,12 @@ Copy-Item "$src\install.bat", "$src\uninstall.bat" $repo
 # The stub launcher the shim calls.
 Set-Content "$repo\run-agent.bat" -Encoding ASCII -Value '@echo WS=%WORKSPACE_DIR%', '@echo ARGS=%*'
 
-Remove-Item Env:AW_INSTALL_BIN_DIR, Env:AW_INSTALL_REG_ROOT, Env:AW_INSTALL_PATH_FILE, Env:AW_INSTALL_WT -ErrorAction SilentlyContinue
+Remove-Item Env:AW_INSTALL_BIN_DIR, Env:AW_INSTALL_REG_ROOT, Env:AW_INSTALL_PATH_FILE, Env:AW_INSTALL_WT, Env:AW_INSTALL_WINAPPS, Env:AW_INSTALL_SENDTO, Env:AW_INSTALL_NOREG -ErrorAction SilentlyContinue
+# Fallback targets are always scratch folders, also with -Real.
+$wa = "$work\apps & (z)"
+$st = "$work\sendto"
+$env:AW_INSTALL_WINAPPS = $wa
+$env:AW_INSTALL_SENDTO = $st
 $regScratch = 'HKCU:\Software\agent-workspace-test'
 if ($Real) {
     $binDir = Join-Path $env:LOCALAPPDATA 'agent-workspace\bin'
@@ -90,6 +95,70 @@ try {
     if (-not $Real) { Check 'uninstall: other PATH entries are kept' ((Get-Path) -eq $seed) }
     Invoke-Bat """$repo\uninstall.bat"""
     Check 'uninstall again: not installed, exit 0' ($code -eq 0 -and $out -like '*not installed*')
+
+    # --- Fallback without the registry (a DisableRegistryTools policy): AW_INSTALL_NOREG=1 ---
+    $env:AW_INSTALL_WT = 'none'
+    $waShim = "$wa\agent-workspace.cmd"
+    $stFile = "$st\agent-workspace.cmd"
+    $origPath = $env:PATH
+    New-Item -ItemType Directory $wa | Out-Null
+    $noRegKeys = { -not (Test-Path -LiteralPath $keys[0]) -and -not (Test-Path -LiteralPath $keys[1]) }
+
+    # WindowsApps on the PATH: the shim goes there, and the SendTo entry opens a terminal.
+    $env:PATH = "$wa;$origPath"
+    $env:AW_INSTALL_NOREG = '1'
+    Invoke-Bat """$repo\install.bat"""
+    Check 'fallback: exit 0, says it is without the registry' ($code -eq 0 -and $out.Contains('without the registry') -and $out.Contains("Installed $waShim -> $repo"))
+    Check 'fallback: shim in WindowsApps, none in bin, no PATH entry, no registry keys' ((Test-Path $waShim) -and -not (Test-Path $shim) -and (Count-OnPath) -eq 0 -and (& $noRegKeys))
+    $send = [IO.File]::ReadAllText($stFile)
+    Check 'fallback: SendTo entry starts the shim in the selected folder' ($send.Contains("set `"D=%~1`"`r`n") -and $send.Contains("cmd /k pushd `"%D%`" ^&^& `"$waShim`"`r`n") -and ($send -notmatch "[^`r]`n"))
+    Invoke-Bat """$waShim"" x"
+    Check 'fallback: the shim runs the launcher' ($code -eq 0 -and $out -like '*ARGS=x*')
+    Invoke-Bat """$repo\install.bat"""
+    Check 'fallback: install again updates' ($code -eq 0 -and $out -like '*Installed*')
+    $env:AW_INSTALL_WT = 'wt.exe'
+    Invoke-Bat """$repo\install.bat"""
+    Check 'fallback with Windows Terminal: SendTo uses wt.exe -d' ([IO.File]::ReadAllText($stFile).Contains("wt.exe -d `"%D%.`" cmd /k `"$waShim`"`r`n"))
+    $env:AW_INSTALL_WT = 'none'
+    Invoke-Bat """$repo\uninstall.bat"""
+    Check 'fallback uninstall (registry tools off): both files removed, no registry note' ($code -eq 0 -and -not (Test-Path $waShim) -and -not (Test-Path $stFile) -and $out.Contains("Removed $waShim") -and -not $out.Contains('reg.exe is disabled'))
+
+    # WindowsApps not on the PATH: the shim stays in the bin folder and the message says how to add it.
+    $env:PATH = $origPath
+    Invoke-Bat """$repo\install.bat"""
+    Check 'fallback, WindowsApps not on PATH: shim in bin, how to add it, SendTo entry' ($code -eq 0 -and (Test-Path $shim) -and -not (Test-Path $waShim) -and (Test-Path $stFile) -and $out.Contains('EditEnvironmentVariables') -and (Count-OnPath) -eq 0)
+    Invoke-Bat """$repo\uninstall.bat"""
+    Check 'uninstall with registry tools off: files removed, notes the PATH/Explorer entries were not checked' ($code -eq 0 -and -not (Test-Path $shim) -and -not (Test-Path $stFile) -and $out.Contains('reg.exe is disabled'))
+
+    # Registry writes fail after a successful probe: nothing half-installed is left, the fallback is used.
+    $env:PATH = "$wa;$origPath"
+    $env:AW_INSTALL_NOREG = 'add'
+    Invoke-Bat """$repo\install.bat"""
+    Check 'registry write fails: undone, fallback installed' ($code -eq 0 -and $out.Contains('undoing') -and (Test-Path $waShim) -and -not (Test-Path $shim) -and (Test-Path $stFile) -and (Count-OnPath) -eq 0 -and (& $noRegKeys))
+    Remove-Item Env:AW_INSTALL_NOREG
+    Invoke-Bat """$repo\uninstall.bat"""
+    Check 'uninstall removes the fallback files' ($code -eq 0 -and -not (Test-Path $waShim) -and -not (Test-Path $stFile))
+
+    # Both modes present (installed on an open PC, then the policy was switched on).
+    Invoke-Bat """$repo\install.bat"""
+    Check 'registry install, WindowsApps on PATH: no fallback files' ($code -eq 0 -and (Test-Path $shim) -and -not (Test-Path $stFile) -and (Count-OnPath) -eq 1 -and -not (& $noRegKeys))
+    Copy-Item $shim $waShim
+    New-Item -ItemType Directory $st -Force | Out-Null
+    Copy-Item $shim $stFile
+    $env:AW_INSTALL_NOREG = '1'
+    Invoke-Bat """$repo\uninstall.bat"""
+    Check 'uninstall with registry tools off: all three files go, registry parts are left and reported' ($code -eq 0 -and -not (Test-Path $shim) -and -not (Test-Path $waShim) -and -not (Test-Path $stFile) -and $out.Contains('reg.exe is disabled') -and (Count-OnPath) -eq 1 -and -not (& $noRegKeys))
+    Remove-Item Env:AW_INSTALL_NOREG
+    Invoke-Bat """$repo\uninstall.bat"""
+    Check 'uninstall without the policy: PATH entry and Explorer keys go too' ($code -eq 0 -and (Count-OnPath) -eq 0 -and (& $noRegKeys))
+
+    Invoke-Bat """$repo\install.bat"""
+    Copy-Item $shim $waShim
+    Copy-Item $shim $stFile
+    Invoke-Bat """$repo\uninstall.bat"""
+    Check 'uninstall with everything present: all removed' ($code -eq 0 -and -not (Test-Path $shim) -and -not (Test-Path $waShim) -and -not (Test-Path $stFile) -and (Count-OnPath) -eq 0 -and (& $noRegKeys))
+    if (-not $Real) { Check 'PATH entries are as before' ((Get-Path) -eq $seed) }
+    $env:PATH = $origPath
 }
 finally {
     if ($Real) { Invoke-Bat """$repo\uninstall.bat""" }
