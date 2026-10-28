@@ -259,9 +259,7 @@ check "docker: --exec ends the session and removes the key" "$(calls)" "remote k
 
 # Generated global instructions (ADR 25): environment notes, the Docker line, then the user's file.
 user=$(mktemp -d)/user.md
-printf 'MY RULES
-line two
-' >"$user"
+printf 'MY RULES\nline two\n' >"$user"
 cp "$user" "$user.orig"
 notes=$HOME/.claude/CLAUDE.md
 rm -f "$notes"
@@ -300,7 +298,7 @@ AGENTS_USER_INSTRUCTIONS=$user.orig plain hermes no >/dev/null
 check "notes: hermes writes no instructions file" "$(find "$HOME" -type f | sort | diff - <(echo "$before") && echo unchanged)" "unchanged"
 
 ld3=$(mktemp -d)
-printf '%s ' true >"$ld3/args"
+printf '%s\0' true >"$ld3/args"
 : >"$ld3/exec"
 rm -f "$notes"
 AGENTS_LAUNCH_DIR=$ld3 AGENTS_USER_INSTRUCTIONS=$user.orig AGENTS_HARNESS_FILE=/opt/agents/claude/harness.sh bash "$start" claude </dev/null >/dev/null 2>&1
