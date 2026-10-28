@@ -1,6 +1,6 @@
 # 16. All state in host folders, no Docker volumes
 
-Status: Accepted. Supersedes the hermes volume in [ADR 3](0003-share-everything-harness-independent.md).
+Status: Accepted. Supersedes the hermes volume in [ADR 3](0003-share-everything-harness-independent.md). [ADR 25](0025-disposable-caches-in-one-volume-generated-instructions.md) adds one volume for disposable caches only; state stays in host folders.
 
 ## Context
 Hermes state was a named Docker volume. A volume hides state from the user: it can't be browsed, backed up or deleted with the repo, and it outlived image rebuilds with a stale venv. But hermes can't simply use a bind mount as its home: it refuses a home it doesn't own privately (Windows bind mounts are uid 10000, mode 0777), keeps its gateway's Unix socket there, and refuses state that resolves outside the home, so symlinking state into a mount fails too. Plugins with Python dependencies make it build a whole venv generation (symlinks, ~350 MB) under `installs/`, which Windows bind mounts refuse.

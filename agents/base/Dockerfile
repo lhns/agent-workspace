@@ -2,7 +2,8 @@
 # CI publishes this image once and builds the harness images on that published image, so they share its layers.
 FROM node:24-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205
 
-LABEL org.opencontainers.image.source=https://github.com/lhns/agent-workspace
+LABEL org.opencontainers.image.source=https://github.com/lhns/agent-workspace \
+      org.opencontainers.image.licenses=Apache-2.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         bash \
@@ -51,6 +52,10 @@ RUN userdel -r node && useradd --create-home --uid 1000 --shell /bin/bash agent
 USER agent
 # Global npm installs and tool binaries go in the agent home, so harness images need no root.
 ENV NPM_CONFIG_PREFIX=/home/agent/.npm-global \
-    PATH=/home/agent/.npm-global/bin:/home/agent/.local/bin:$PATH
-RUN mkdir -p ~/.config/git
+    PATH=/home/agent/.npm-global/bin:/home/agent/.local/bin:/home/agent/.cache/bin:$PATH
+# ~/.cache is a named volume (compose.yaml, ADR 25): downloads, caches and standalone tools survive
+# runs without going through the workspace mount. Created here so a new volume gets agent's ownership.
+ENV npm_config_cache=/home/agent/.cache/npm \
+    XDG_CACHE_HOME=/home/agent/.cache
+RUN mkdir -p ~/.config/git ~/.cache/bin
 WORKDIR /workspace

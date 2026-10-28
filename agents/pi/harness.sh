@@ -4,6 +4,8 @@
 
 dirs="config"
 picker=(pi --resume)
+# Where the harness reads global instructions; start.sh writes the generated file there.
+instructions="$HOME/.pi/agent/AGENTS.md"
 
 # Sessions live in a folder named after the working directory.
 find_session() {

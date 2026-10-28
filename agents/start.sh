@@ -16,6 +16,31 @@ h=${1:?usage: agents-start.sh <harness>}
 # shellcheck source=agents/docker.sh
 . /usr/local/lib/agents-docker.sh
 
+# The harness's global instructions, generated: the environment notes, a line on Docker, then the
+# user's own shared/AGENTS.md (ADR 25). Atomic, because concurrent starts write the same file.
+# Nothing for a harness without an instructions path (hermes).
+write_instructions() {
+    [ -n "$instructions" ] || return 0
+    local dir tmp user=${AGENTS_USER_INSTRUCTIONS:-/opt/agents-user.md}
+    dir=$(dirname "$instructions")
+    mkdir -p "$dir" || return 0
+    tmp=$(mktemp "$dir/.instructions.XXXXXX") || return 0
+    {
+        cat "${AGENTS_ENVIRONMENT_FILE:-/usr/local/lib/agents-environment.md}"
+        if [ -n "$docker_active" ]; then
+            echo "- Docker: on. It is the user's daemon: you see their containers; remove only ones you started. Bind mounts work for the workspace and \`/tmp\` only; published ports are on localhost."
+        else
+            echo "- Docker: none."
+        fi
+        # The user's file, set apart by a blank line.
+        if [ -f "$user" ] && [ -s "$user" ]; then
+            echo
+            cat "$user"
+        fi
+    } >"$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$instructions"
+    rm -f "$tmp"
+}
+
 # Starts the command in place of this script. With a Docker session it runs as a child instead, so the
 # session and this container's key can be ended after it; SIGTERM (docker stop) is passed on.
 launch_cmd() {
@@ -23,6 +48,7 @@ launch_cmd() {
     trap 'docker_down; exit 143' TERM HUP INT
     docker_up
     trap - TERM HUP INT
+    write_instructions
     [ -n "$docker_active" ] || exec "$@"
     "$@" <&0 &
     local child=$! status
@@ -35,6 +61,10 @@ launch_cmd() {
     docker_down
     exit "$status"
 }
+
+# dirs, picker, instructions and find_session for this harness (find_session needs sql() below).
+# shellcheck source=agents/claude/harness.sh
+. "${AGENTS_HARNESS_FILE:-/usr/local/lib/agents-harness.sh}"
 
 launch=${AGENTS_LAUNCH_DIR:-/opt/launch/${AGENTS_RUN_ID:-none}}
 args=()
@@ -61,10 +91,6 @@ for row in rows:
     print("\t".join(map(str, row)))
 PY
 }
-
-# find_session and picker for this harness.
-# shellcheck source=agents/claude/harness.sh
-. "${AGENTS_HARNESS_FILE:-/usr/local/lib/agents-harness.sh}"
 
 # choose(): arrow-key menu, shared with launch.sh.
 # shellcheck source=agents/menu.sh

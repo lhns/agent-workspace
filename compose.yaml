@@ -18,6 +18,11 @@ x-git: &git ./shared/git:/home/agent/.config/git
 
 # Mounted, not built in: script edits need no rebuild. Each service's command runs it.
 x-start: &start ./agents/start.sh:/usr/local/lib/agents-start.sh:ro
+# Written into each harness's global instructions at start (agents/start.sh): these notes, then the user's file.
+x-environment: &environment ./agents/environment.md:/usr/local/lib/agents-environment.md:ro
+x-user-instructions: &user-instructions ./shared/AGENTS.md:/opt/agents-user.md:ro
+# Disposable caches and downloaded tools on the daemon: cheap on a remote Docker, kept across runs (ADR 25).
+x-cache: &cache cache:/home/agent/.cache
 x-menu: &menu ./agents/menu.sh:/usr/local/lib/agents-menu.sh:ro
 x-docker: &docker ./agents/docker.sh:/usr/local/lib/agents-docker.sh:ro
 # The seed key for Docker (agents/docker.sh): enrolled once, shared by every harness. The launchers create it.
@@ -92,8 +97,10 @@ services:
       - *workspace
       - *git
       - ./agents/claude/config:/home/agent/.claude
-      - ./shared/AGENTS.md:/home/agent/.claude/CLAUDE.md
+      - *user-instructions
+      - *cache
       - *start
+      - *environment
       - *menu
       - *docker
       - *remote-docker
@@ -109,8 +116,10 @@ services:
       - *git
       - ./agents/opencode/config:/home/agent/.config/opencode
       - ./agents/opencode/data:/home/agent/.local/share/opencode
-      - ./shared/AGENTS.md:/home/agent/.config/opencode/AGENTS.md
+      - *user-instructions
+      - *cache
       - *start
+      - *environment
       - *menu
       - *docker
       - *remote-docker
@@ -125,8 +134,10 @@ services:
       - *workspace
       - *git
       - ./agents/pi/config:/home/agent/.pi/agent
-      - ./shared/AGENTS.md:/home/agent/.pi/agent/AGENTS.md
+      - *user-instructions
+      - *cache
       - *start
+      - *environment
       - *menu
       - *docker
       - *remote-docker
@@ -141,8 +152,10 @@ services:
       - *workspace
       - *git
       - ./agents/cline/config:/home/agent/.cline
-      - ./shared/AGENTS.md:/home/agent/.agents/AGENTS.md
+      - *user-instructions
+      - *cache
       - *start
+      - *environment
       - *menu
       - *docker
       - *remote-docker
@@ -161,9 +174,15 @@ services:
       - *git
       - ./agents/hermes/config:/home/agent/.hermes-config
       - ./agents/hermes/entrypoint.sh:/usr/local/lib/hermes-entrypoint.sh:ro
+      - *user-instructions
+      - *cache
       - *start
+      - *environment
       - *menu
       - *docker
       - *remote-docker
       - *launch
       - ./agents/hermes/harness.sh:/usr/local/lib/agents-harness.sh:ro
+
+volumes:
+  cache: {}
