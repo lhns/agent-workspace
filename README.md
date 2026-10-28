@@ -92,7 +92,7 @@ renovate.json                  dependency updates
 |---|---|
 | workspace, `.env`, tools | the agent binary (image) |
 | git config and credentials | config, sessions, login (`agents/<harness>/config`, opencode also `data`) |
-| `shared/AGENTS.md` (global instructions) | |
+| `shared/AGENTS.md` (your global instructions), cache volume | |
 
 ## Adding a harness
 
@@ -150,15 +150,21 @@ Host credential helpers can't run in the container. Instead git uses `credential
 
 ## Global instructions
 
-Write `shared/AGENTS.md` once; it is mounted where each harness reads global instructions:
+Each harness reads global instructions from its own path. At every start the launcher writes that file: short notes on the environment (`agents/environment.md`, including whether Docker is on), then the contents of `shared/AGENTS.md`. Write your own instructions in `shared/AGENTS.md` (for example a copy of your global `AGENTS.md`); edits to the generated file are overwritten.
 
-| Harness | Path in the container |
+| Harness | Generated at (in the container) |
 |---|---|
 | claude | `~/.claude/CLAUDE.md` |
 | opencode | `~/.config/opencode/AGENTS.md` |
 | pi | `~/.pi/agent/AGENTS.md` |
 | cline | `~/.agents/AGENTS.md` |
-| hermes | not mounted: its only global file, `SOUL.md`, is a persona, not instructions |
+| hermes | nothing: its only global file, `SOUL.md`, is a persona, not instructions |
+
+## Cache and a light workspace
+
+`~/.cache` in the container is a Docker volume (`agent-workspace_cache`): npm's cache and tools the agent downloads (`~/.cache/bin`, on PATH) survive between runs without being written to the workspace. Clear it with `docker volume rm agent-workspace_cache`.
+
+With a remote Docker daemon every write to the workspace goes over the network. The agents are told to keep scratch files and tools out of it, but a project's own dependencies (`node_modules`, `.venv`) have to live there. `AGENTS_WORKSPACE_CONSISTENCY` (for example `write=back`, see Settings) eases the cost.
 
 ## Hermes state
 
@@ -176,3 +182,7 @@ Hermes refuses a home folder it can't keep private, so its home (`~/.hermes`) st
 CI (`.github/workflows/ci.yml`) builds every image through the real launcher and checks that each agent starts; on `main` it then publishes the tested image to ghcr.io (the packages must be set public once) and checks the pull path. CI builds the base image once and the harness images on top of it, so they share its layers (checked against the registry). It also runs shellcheck/actionlint and tests `run.sh` and `run.bat` against a stub docker, the install scripts (on the Windows runner's own user PATH and registry), and `launch.sh` and `start.sh` in containers. Renovate runs from a scheduled workflow and needs a `RENOVATE_TOKEN` repository secret (a personal access token, so its PRs trigger CI); see [ADR 17](docs/adr/0017-pinned-versions-renovate-ci.md) and [ADR 19](docs/adr/0019-prebuilt-images-on-ghcr.md).
 
 Design decisions: [docs/adr](docs/adr/).
+
+## License
+
+Licensed under Apache 2.0, see [LICENSE](LICENSE).

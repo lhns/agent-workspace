@@ -4,6 +4,8 @@
 
 dirs="config"
 picker=(hermes sessions browse)
+# Global instructions file; hermes has none (its SOUL.md is a persona), so nothing is written.
+instructions=""
 
 # Uses sql() from start.sh. Bare -c falls back to the newest session of any folder. Hermes'
 # workspace is the git root, else the folder; empty launch stubs don't count.

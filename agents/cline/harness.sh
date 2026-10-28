@@ -4,6 +4,8 @@
 
 dirs="config"
 picker=(cline history)
+# Where the harness reads global instructions; start.sh writes the generated file there.
+instructions="$HOME/.agents/AGENTS.md"
 
 # Uses sql() from start.sh. No continue flag; the session index records each session's folder.
 # A session counts once it has written messages (every launch adds a row).

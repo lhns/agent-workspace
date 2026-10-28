@@ -5,6 +5,8 @@
 dirs="config data"
 # No session picker at startup; use /sessions inside opencode.
 picker=()
+# Where the harness reads global instructions; start.sh writes the generated file there.
+instructions="$HOME/.config/opencode/AGENTS.md"
 
 # Uses sql() from start.sh.
 find_session() {

@@ -256,4 +256,51 @@ out=$(dock AGENTS_DOCKER=remote-docker AGENTS_LAUNCH_DIR="$ld2"); code=$?
 check "docker: --exec gets DOCKER_HOST too" "$out" "EXEC DH=unix:///tmp/remote-docker."
 check "docker: --exec keeps the command's exit status" "$code" "7"
 check "docker: --exec ends the session and removes the key" "$(calls)" "remote key rm SHA256:mine -f"
+
+# Generated global instructions (ADR 25): environment notes, the Docker line, then the user's file.
+user=$(mktemp -d)/user.md
+printf 'MY RULES\nline two\n' >"$user"
+cp "$user" "$user.orig"
+notes=$HOME/.claude/CLAUDE.md
+rm -f "$notes"
+out=$(plain claude no)
+check "notes: the harness still starts" "$out" "STUB claude"
+rm -f "$notes"
+out=$(AGENTS_USER_INSTRUCTIONS=$user plain claude no)
+check "notes: written at the harness path" "$(cat "$notes")" "# Environment"
+check "notes: the Docker line says none without Docker" "$(cat "$notes")" "- Docker: none."
+check "notes: the Docker 'on' line is absent without Docker" "$(cat "$notes")" "- Docker: on." no
+check "notes: the user's file is appended" "$(cat "$notes")" "MY RULES"
+lineno() { grep -nE "$1" "$notes" | head -n 1 | cut -d: -f1; }
+e=$(lineno '^# Environment'); d=$(lineno '^- Docker:'); u=$(lineno '^MY RULES')
+check "notes: order is environment, Docker, user" "$([ "$e" -lt "$d" ] && [ "$d" -lt "$u" ] && echo ordered)" "ordered"
+check "notes: the user's file is untouched" "$(cmp "$user" "$user.orig" && echo same)" "same"
+check "notes: no temp file is left behind" "$(find "$HOME/.claude" -maxdepth 1 -name '.instructions.*' | wc -l | tr -d ' ')" "0"
+
+: >"$user"
+rm -f "$notes"
+AGENTS_USER_INSTRUCTIONS=$user plain claude no >/dev/null
+check "notes: an empty user file adds nothing" "$(tail -n 1 "$notes")" "- Docker: none."
+
+rm -f "$notes"
+out=$(dock AGENTS_DOCKER=remote-docker AGENTS_DOCKER_TOKEN="$TOKEN" AGENTS_USER_INSTRUCTIONS="$user.orig")
+check "notes: Docker on is written when a session runs" "$(cat "$notes")" "- Docker: on."
+check "notes: Docker none is absent when a session runs" "$(cat "$notes")" "- Docker: none." no
+
+# Every harness with an instructions path gets the file there; hermes has none and writes nothing.
+for hh in opencode:.config/opencode/AGENTS.md pi:.pi/agent/AGENTS.md cline:.agents/AGENTS.md; do
+    rm -f "$HOME/${hh#*:}"
+    AGENTS_USER_INSTRUCTIONS=$user.orig plain "${hh%%:*}" no >/dev/null
+    check "notes: ${hh%%:*} gets the file at ~/${hh#*:}" "$(cat "$HOME/${hh#*:}")" "MY RULES"
+done
+before=$(find "$HOME" -type f | sort)
+AGENTS_USER_INSTRUCTIONS=$user.orig plain hermes no >/dev/null
+check "notes: hermes writes no instructions file" "$(find "$HOME" -type f | sort | diff - <(echo "$before") && echo unchanged)" "unchanged"
+
+ld3=$(mktemp -d)
+printf '%s\0' true >"$ld3/args"
+: >"$ld3/exec"
+rm -f "$notes"
+AGENTS_LAUNCH_DIR=$ld3 AGENTS_USER_INSTRUCTIONS=$user.orig AGENTS_HARNESS_FILE=/opt/agents/claude/harness.sh bash "$start" claude </dev/null >/dev/null 2>&1
+check "notes: --exec writes them too" "$(cat "$notes")" "MY RULES"
 exit $fail
