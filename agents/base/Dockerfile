@@ -1,6 +1,6 @@
 # Shared by every harness image: OS, tools, user. Harness images build FROM it.
 # CI publishes this image once and builds the harness images on that published image, so they share its layers.
-FROM node:24-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205
+FROM node:24-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c
 
 LABEL org.opencontainers.image.source=https://github.com/lhns/agent-workspace \
       org.opencontainers.image.licenses=Apache-2.0
