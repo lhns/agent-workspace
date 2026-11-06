@@ -14,7 +14,9 @@
 #   noninteractive   present for -y or AGENTS_NONINTERACTIVE
 #   exec             present for --exec
 # Settings come from the environment (compose interpolation, so a shell variable beats .env):
-# AGENTS_HARNESS, AGENTS_NONINTERACTIVE (non-empty = -y), AGENTS_WORKSPACE_TARGET, AGENTS_RUN_ID.
+# AGENTS_HARNESS, AGENTS_NONINTERACTIVE (non-empty = -y), AGENTS_WORKSPACE_TARGET, AGENTS_RUN_ID,
+# AGENTS_PLATFORM (agents/os.sh; in a Windows container the target is a Windows path and only the
+# harnesses with a Dockerfile.windows exist).
 # Exit 0: done (launch if `result` says so), 130: Ctrl-C in the menu, else an error already printed.
 set -u
 AGENTS_DIR=${AGENTS_DIR:-/opt/agent-workspace}

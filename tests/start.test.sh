@@ -24,7 +24,8 @@ tcheck() {
 }
 
 HOME=$(mktemp -d); export HOME
-unset CLAUDE_CONFIG_DIR XDG_DATA_HOME HERMES_HOME
+# The launcher's own run (--exec) sets some of these: the tests make their own.
+unset CLAUDE_CONFIG_DIR XDG_DATA_HOME HERMES_HOME AGENTS_RUN_ID AGENTS_LAUNCH_DIR AGENTS_AUTORESUME AGENTS_NONINTERACTIVE AGENTS_DOCKER AGENTS_DOCKER_TOKEN
 stubs=$(mktemp -d)
 for b in claude pi opencode cline hermes; do
     printf '#!/bin/sh\necho "STUB %s $*"\n' "$b" > "$stubs/$b"

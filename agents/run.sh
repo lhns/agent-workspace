@@ -3,6 +3,7 @@
 # run on the host (.env, workspace path, image pull/build, docker compose); the options, the
 # harness menu and shared/.last-harness are agents/launch.sh, run in the base image with the
 # arguments untouched. Its result comes back in shared/.launch/<id>. Writes only gitignored paths.
+# With a Windows Docker daemon (or AGENTS_PLATFORM=windows) it uses the Windows images, see ADR 26.
 set -eu
 # A leading --workdir DIR is the workspace (beats the shell and .env). It is resolved against the
 # caller's folder, so before the cd below. The arguments stay untouched: the core skips it.
