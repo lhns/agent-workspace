@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # The remote-docker client is the docker CLI (with compose) plus a session that serves the workspace
 # to a remote Docker daemon; agents/docker.sh starts it when AGENTS_DOCKER is set (ADR 24).
 # renovate: datasource=github-releases depName=lhns/remote-docker
-ARG REMOTE_DOCKER_VERSION=v0.16.1
+ARG REMOTE_DOCKER_VERSION=v0.16.4
 RUN set -eu; \
     file="remote-docker_${REMOTE_DOCKER_VERSION#v}_linux_$(dpkg --print-architecture).tar.gz"; \
     url="https://github.com/lhns/remote-docker/releases/download/${REMOTE_DOCKER_VERSION}"; \
