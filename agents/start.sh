@@ -6,27 +6,28 @@
 # Never asks without a terminal or with AGENTS_NONINTERACTIVE (non-empty): resumes if there is a session.
 #
 # The launcher's choices arrive in the launch dir (agents/launch.sh writes it, mounted at
-# /opt/launch/$AGENTS_RUN_ID): args (NUL-separated), mode, noninteractive, exec. Without one
+# $AGENTS_DIR/launch/$AGENTS_RUN_ID): args (NUL-separated), mode, noninteractive, exec. Without one
 # (plain `docker compose run`) there are no arguments and AGENTS_AUTORESUME decides.
 # Per-harness knowledge (find_session, picker) comes from the mounted agents/<harness>/harness.sh.
 set -u
+AGENTS_DIR=${AGENTS_DIR:-/opt/agent-workspace}
 h=${1:?usage: agents-start.sh <harness>}
 
 # docker_up / docker_down: Docker for the agent when AGENTS_DOCKER is set (agents/docker.sh).
 # shellcheck source=agents/docker.sh
-. /usr/local/lib/agents-docker.sh
+. "$AGENTS_DIR/agents/docker.sh"
 
 # The harness's global instructions, generated: the environment notes, a line on Docker, then the
-# user's own shared/AGENTS.md (ADR 25). Atomic, because concurrent starts write the same file.
+# user's own shared/instructions/AGENTS.md (ADR 25). Atomic, because concurrent starts write the same file.
 # Nothing for a harness without an instructions path (hermes).
 write_instructions() {
     [ -n "$instructions" ] || return 0
-    local dir tmp user=${AGENTS_USER_INSTRUCTIONS:-/opt/agents-user.md}
+    local dir tmp user=${AGENTS_USER_INSTRUCTIONS:-$AGENTS_DIR/instructions/AGENTS.md}
     dir=$(dirname "$instructions")
     mkdir -p "$dir" || return 0
     tmp=$(mktemp "$dir/.instructions.XXXXXX") || return 0
     {
-        cat "${AGENTS_ENVIRONMENT_FILE:-/usr/local/lib/agents-environment.md}"
+        cat "$AGENTS_DIR/agents/environment.md"
         if [ -n "$docker_active" ]; then
             echo "- Docker: on. It is the user's daemon: you see their containers; remove only ones you started. Bind mounts work for the workspace and \`/tmp\` only; published ports are on localhost."
         else
@@ -64,9 +65,9 @@ launch_cmd() {
 
 # dirs, picker, instructions and find_session for this harness (find_session needs sql() below).
 # shellcheck source=agents/claude/harness.sh
-. "${AGENTS_HARNESS_FILE:-/usr/local/lib/agents-harness.sh}"
+. "$AGENTS_DIR/agents/$h/harness.sh"
 
-launch=${AGENTS_LAUNCH_DIR:-/opt/launch/${AGENTS_RUN_ID:-none}}
+launch=${AGENTS_LAUNCH_DIR:-$AGENTS_DIR/launch/${AGENTS_RUN_ID:-none}}
 args=()
 mode=${AGENTS_AUTORESUME:-}
 if [ -d "$launch" ]; then
@@ -81,7 +82,7 @@ fi
 # shellcheck disable=SC2317,SC2329 # (SC2317 on older shellcheck) called from the harness.sh files, which shellcheck cannot follow from here
 sql() {
     [ -f "$1" ] || return 1
-    python3 - "$@" <<'PY' 2>/dev/null
+    "${PYTHON:-python3}" - "$@" <<'PY' 2>/dev/null
 import sqlite3, sys
 db, query, *args = sys.argv[1:]
 rows = sqlite3.connect("file:" + db + "?mode=ro", uri=True).execute(query, args).fetchall()
@@ -94,7 +95,7 @@ PY
 
 # choose(): arrow-key menu, shared with launch.sh.
 # shellcheck source=agents/menu.sh
-. /usr/local/lib/agents-menu.sh
+. "$AGENTS_DIR/agents/menu.sh"
 
 raw=$mode
 mode=$(tr '[:upper:]' '[:lower:]' <<<"$mode")

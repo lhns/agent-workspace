@@ -45,7 +45,7 @@ docker_enrol_seed() {
 
 docker_up() {
     [ "${AGENTS_DOCKER:-}" = remote-docker ] || return 0
-    docker_seed=${AGENTS_DOCKER_SEED:-/home/agent/.remote-docker/seed}
+    docker_seed=${AGENTS_DOCKER_SEED:-${AGENTS_HOME:-/home/agent}/.remote-docker/seed}
     local token note out
     token=$(docker_token "${AGENTS_DOCKER_TOKEN:-}")
     # The agent must not see the token; it is spent below or stale.

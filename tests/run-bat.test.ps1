@@ -99,6 +99,16 @@ try {
     Check 'first run writes the same hashes as sha256sum' ((Get-Content "$work\agents\claude\.build.sha256") -eq (Get-Hash $baseDf, 'agents\claude\Dockerfile') -and (Get-Content "$work\agents\base\.build.sha256") -eq (Get-Hash $baseDf))
     Check 'the core runs with the launch dir in place, both runs share its id' ($dirseen -eq 'dir' -and $ids.Count -eq 2 -and $ids[0] -eq $ids[1] -and $ids[0])
     Check 'the launch dir is removed afterwards' (-not (Test-Path "$work\shared\.launch\$($ids[0])"))
+    Check 'your instructions file is created in shared\instructions' ((Test-Path "$work\shared\instructions\AGENTS.md") -and -not (Test-Path "$work\shared\AGENTS.md"))
+    # An older shared\AGENTS.md moves there once; an existing new file is never overwritten.
+    Remove-Item "$work\shared\instructions" -Recurse
+    Set-Content "$work\shared\AGENTS.md" 'mine'
+    Invoke-Launcher 'claude'
+    Check 'an older shared\AGENTS.md is moved to shared\instructions' ((Get-Content "$work\shared\instructions\AGENTS.md") -eq 'mine' -and -not (Test-Path "$work\shared\AGENTS.md"))
+    Set-Content "$work\shared\AGENTS.md" 'old'
+    Invoke-Launcher 'claude'
+    Check 'an existing shared\instructions\AGENTS.md is kept' ((Get-Content "$work\shared\instructions\AGENTS.md") -eq 'mine' -and (Test-Path "$work\shared\AGENTS.md"))
+    Remove-Item "$work\shared\AGENTS.md"
 
     $unchanged = "image inspect agent-workspace-base|$run base claude|image inspect agent-workspace-claude|$run claude"
     Invoke-Launcher 'claude'

@@ -70,6 +70,15 @@ check "second launch: nothing built" "$(is 'image inspect agent-workspace-base|c
 check "the core has the launch dir, the harness run gets no arguments" "$([ "$(log dir)" = dir ]; echo $?)"
 check "the same run id for both runs" "$([ "$(sort -u "$STUB_LOG.id" | wc -l)" = 1 ] && [ -n "$(log id)" ]; echo $?)"
 check "the launch dir is removed afterwards" "$([ -z "$(ls -A shared/.launch)" ]; echo $?)"
+check "your instructions file is created in shared/instructions" "$([ -f shared/instructions/AGENTS.md ] && [ ! -e shared/AGENTS.md ]; echo $?)"
+# An older shared/AGENTS.md moves there once; an existing new file is never overwritten.
+rm -rf shared/instructions; echo mine > shared/AGENTS.md
+run claude
+check "an older shared/AGENTS.md is moved to shared/instructions" "$([ "$(cat shared/instructions/AGENTS.md)" = mine ] && [ ! -e shared/AGENTS.md ]; echo $?)"
+echo old > shared/AGENTS.md
+run claude
+check "an existing shared/instructions/AGENTS.md is kept" "$([ "$(cat shared/instructions/AGENTS.md)" = mine ] && [ -e shared/AGENTS.md ]; echo $?)"
+rm shared/AGENTS.md
 
 # Arguments reach the core untouched, whatever they are.
 run --continue claude --model x 'a b' '' '!' '"q"' '-z'

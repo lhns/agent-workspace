@@ -42,8 +42,8 @@ if touch "$state/.smoke" 2>/dev/null; then rm -f "$state/.smoke"; else bad "$sta
 
 echo "== $h: cache volume ~/.cache"
 if touch "$HOME/.cache/.smoke" 2>/dev/null; then rm -f "$HOME/.cache/.smoke"; else bad "$HOME/.cache not writable"; fi
-[ "$(npm config get cache)" = /home/agent/.cache/npm ] || bad "npm cache is $(npm config get cache), expected /home/agent/.cache/npm"
-case :$PATH: in *:/home/agent/.cache/bin:*) ;; *) bad "$HOME/.cache/bin is not on PATH" ;; esac
+[ "$(npm config get cache)" = "$HOME/.cache/npm" ] || bad "npm cache is $(npm config get cache), expected $HOME/.cache/npm"
+case :$PATH: in *:"$HOME/.cache/bin":*) ;; *) bad "$HOME/.cache/bin is not on PATH" ;; esac
 
 # The TUI must still be running when the timeout hits (exit 124), without crash output.
 echo "== $h: TUI stays up"

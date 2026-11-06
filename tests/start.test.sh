@@ -1,10 +1,11 @@
 #!/bin/bash
 # Tests agents/start.sh inside a harness container (see .github/workflows/ci.yml):
-#   docker compose run --rm -T -v "$PWD/agents:/opt/agents:ro" claude bash -c "$(cat tests/start.test.sh)" start-test
+#   docker compose run --rm -T claude bash -c "$(cat tests/start.test.sh)" start-test
 # The harness binaries are stubs that print their arguments; HOME is a scratch directory. The mounted
 # agents/ gives every harness's harness.sh, not only the container's own.
 set -u
-start=/usr/local/lib/agents-start.sh
+AGENTS_DIR=${AGENTS_DIR:-/opt/agent-workspace}
+start=$AGENTS_DIR/agents/start.sh
 fail=0
 check() { # name, command output, expected substring, "no" to expect its absence
     if [ "${4:-}" = no ]; then
@@ -27,12 +28,12 @@ cd "$work" || exit 1
 
 # Without a terminal: how the harness is started.
 plain() { # harness, AGENTS_AUTORESUME
-    AGENTS_HARNESS_FILE=/opt/agents/$1/harness.sh AGENTS_AUTORESUME=$2 bash "$start" "$1" </dev/null 2>&1
+    AGENTS_AUTORESUME=$2 bash "$start" "$1" </dev/null 2>&1
 }
 # With a terminal and scripted keys (printf format) for the menu.
 pty() { # keys, harness, keys sent a second later
     # shellcheck disable=SC2059 # keys are printf escapes
-    { sleep 1; printf "$1"; sleep 1; printf "${3:-}"; sleep 1; } | AGENTS_AUTORESUME=ask timeout 20 script -qec "AGENTS_HARNESS_FILE=/opt/agents/$2/harness.sh bash $start $2" /dev/null 2>&1
+    { sleep 1; printf "$1"; sleep 1; printf "${3:-}"; sleep 1; } | AGENTS_AUTORESUME=ask timeout 20 script -qec "bash $start $2" /dev/null 2>&1
 }
 UP='\033[A' DOWN='\033[B' ENTER='\n'
 
@@ -53,24 +54,24 @@ withargs() { # harness, AGENTS_AUTORESUME, harness args...
     shift 2
     d=$(mktemp -d)
     printf '%s\0' "$@" >"$d/args"
-    AGENTS_LAUNCH_DIR=$d AGENTS_HARNESS_FILE=/opt/agents/$h/harness.sh AGENTS_AUTORESUME=$m bash "$start" "$h" </dev/null 2>&1
+    AGENTS_LAUNCH_DIR=$d AGENTS_AUTORESUME=$m bash "$start" "$h" </dev/null 2>&1
 }
 modelx=$(mktemp -d)
 printf '%s\0' --model x >"$modelx/args"
 out=$(withargs claude yes --model x);    check "args: after the resume arguments" "$out" "STUB claude --continue --model x"
 out=$(withargs claude ask --model x);    check "args: ask without a terminal resumes, then the args" "$out" "STUB claude --continue --model x"
 out=$(withargs claude no --model x "a b");  check "args: new conversation, args only" "$out" "STUB claude --model x a b" ; check "args: new conversation, no --continue" "$out" "--continue" no
-out=$(AGENTS_AUTORESUME=ask AGENTS_NONINTERACTIVE=1 timeout 10 script -qec "AGENTS_LAUNCH_DIR=$modelx AGENTS_HARNESS_FILE=/opt/agents/claude/harness.sh bash $start claude" /dev/null 2>&1)
+out=$(AGENTS_AUTORESUME=ask AGENTS_NONINTERACTIVE=1 timeout 10 script -qec "AGENTS_LAUNCH_DIR=$modelx bash $start claude" /dev/null 2>&1)
 check "non-interactive with a terminal resumes without a menu" "$out" "STUB claude --continue --model x" ; check "non-interactive: no menu" "$out" "Start new conversation" no
-out=$(AGENTS_AUTORESUME=pick timeout 10 script -qec "AGENTS_LAUNCH_DIR=$modelx AGENTS_HARNESS_FILE=/opt/agents/claude/harness.sh bash $start claude" /dev/null 2>&1)
+out=$(AGENTS_AUTORESUME=pick timeout 10 script -qec "AGENTS_LAUNCH_DIR=$modelx bash $start claude" /dev/null 2>&1)
 check "pick: the harness's own session picker, then the args" "$out" "STUB claude --resume --model x"
-out=$(AGENTS_AUTORESUME=pick timeout 10 script -qec "AGENTS_HARNESS_FILE=/opt/agents/hermes/harness.sh bash $start hermes" /dev/null 2>&1)
+out=$(AGENTS_AUTORESUME=pick timeout 10 script -qec "bash $start hermes" /dev/null 2>&1)
 check "pick: hermes" "$out" "STUB hermes sessions browse"
 out=$(withargs claude pick)
 check "pick without a terminal is an error" "$out" "--sessions needs a terminal" ; check "pick without a terminal starts nothing" "$out" "STUB" no
-out=$(AGENTS_NONINTERACTIVE=1 AGENTS_AUTORESUME=pick timeout 10 script -qec "AGENTS_HARNESS_FILE=/opt/agents/claude/harness.sh bash $start claude" /dev/null 2>&1)
+out=$(AGENTS_NONINTERACTIVE=1 AGENTS_AUTORESUME=pick timeout 10 script -qec "bash $start claude" /dev/null 2>&1)
 check "pick with non-interactive is an error" "$out" "can't be combined with -y"
-out=$(AGENTS_AUTORESUME=pick timeout 10 script -qec "AGENTS_HARNESS_FILE=/opt/agents/opencode/harness.sh bash $start opencode" /dev/null 2>&1)
+out=$(AGENTS_AUTORESUME=pick timeout 10 script -qec "bash $start opencode" /dev/null 2>&1)
 check "pick for opencode is an error" "$out" "no session picker" ; check "pick for opencode starts nothing" "$out" "STUB" no
 
 out=$(pty "$ENTER" claude);              check "menu: Enter resumes" "$out" "STUB claude --continue"
@@ -86,7 +87,7 @@ check "menu: title" "$out" "claude has an earlier conversation in /tmp/aw-start-
 check "menu: clears the screen first" "$out" "$(printf '[H[2J')"
 out=$(pty '\033' claude "$DOWN$DOWN$ENTER"); check "menu: a lone Esc does not hang or select; Down+Down+Enter then starts fresh" "$out" "--continue" no
 out=$(pty "$DOWN" claude '\003');         check "menu: Ctrl-C starts nothing" "$out" "STUB" no ; check "menu: Ctrl-C shows the cursor again" "$out" "$(printf '\033[?25h')"
-out=$(AGENTS_AUTORESUME=yes timeout 10 script -qec "AGENTS_HARNESS_FILE=/opt/agents/claude/harness.sh bash $start claude" /dev/null </dev/null 2>&1)
+out=$(AGENTS_AUTORESUME=yes timeout 10 script -qec "bash $start claude" /dev/null </dev/null 2>&1)
 check "yes: no menu" "$out" "Start new conversation" no
 
 # pi: sessions live in a folder named after the working directory.
@@ -138,7 +139,6 @@ out=$(pty "$DOWN$ENTER" hermes);         check "hermes: picker" "$out" "STUB her
 
 # The launch dir that agents/launch.sh writes: args (NUL-separated), mode, noninteractive, exec.
 ld=$(mktemp -d)
-export AGENTS_HARNESS_FILE=/opt/agents/claude/harness.sh
 launched() { # harness, AGENTS_AUTORESUME: starts with the launch dir, no terminal
     AGENTS_LAUNCH_DIR=$ld AGENTS_AUTORESUME=$2 bash "$start" "$1" </dev/null 2>&1
 }
@@ -191,7 +191,7 @@ chmod +x "$dstubs/claude" "$dstubs/remote-docker"
 export STUB_LOG=$dstubs/calls STUB_COUNT=$dstubs/count
 dock() { # env assignments...: starts claude through start.sh with the stubs
     rm -f "$HOME/.remote-docker.json" "$STUB_LOG" "$STUB_COUNT"
-    env PATH="$dstubs:$PATH" AGENTS_HARNESS_FILE=/opt/agents/claude/harness.sh AGENTS_AUTORESUME=no \
+    env PATH="$dstubs:$PATH" AGENTS_AUTORESUME=no \
         AGENTS_DOCKER_SEED="$seed" "$@" bash "$start" claude </dev/null 2>&1
 }
 calls() { cat "$STUB_LOG" 2>/dev/null; }
@@ -239,7 +239,7 @@ check "docker: a refused token still starts the harness" "$out" "STUB claude DH=
 # Two containers starting together with the same token: one enrols the seed, the other uses it.
 seed=$(mktemp -d)/seed; rm -f "$HOME/.remote-docker.json" "$STUB_LOG" "$STUB_COUNT"
 for i in 1 2; do
-    env PATH="$dstubs:$PATH" AGENTS_HARNESS_FILE=/opt/agents/claude/harness.sh AGENTS_AUTORESUME=no STUB_SLOW_ENROL=1 \
+    env PATH="$dstubs:$PATH" AGENTS_AUTORESUME=no STUB_SLOW_ENROL=1 \
         AGENTS_DOCKER_SEED="$seed" AGENTS_DOCKER=remote-docker AGENTS_DOCKER_TOKEN='rdt1.a.b*c/d&e' \
         bash "$start" claude </dev/null >"$dstubs/race$i" 2>&1 &
 done
@@ -301,6 +301,6 @@ ld3=$(mktemp -d)
 printf '%s\0' true >"$ld3/args"
 : >"$ld3/exec"
 rm -f "$notes"
-AGENTS_LAUNCH_DIR=$ld3 AGENTS_USER_INSTRUCTIONS=$user.orig AGENTS_HARNESS_FILE=/opt/agents/claude/harness.sh bash "$start" claude </dev/null >/dev/null 2>&1
+AGENTS_LAUNCH_DIR=$ld3 AGENTS_USER_INSTRUCTIONS=$user.orig bash "$start" claude </dev/null >/dev/null 2>&1
 check "notes: --exec writes them too" "$(cat "$notes")" "MY RULES"
 exit $fail

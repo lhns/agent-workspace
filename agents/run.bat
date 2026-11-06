@@ -45,7 +45,12 @@ set "AGENTS_RUN_ID=%RANDOM%%RANDOM%"
 if not exist shared\git mkdir shared\git
 if not exist shared\remote-docker mkdir shared\remote-docker
 if not exist shared\.launch\%AGENTS_RUN_ID% mkdir shared\.launch\%AGENTS_RUN_ID%
-if not exist shared\AGENTS.md type nul > shared\AGENTS.md
+rem Your instructions live in a directory (a single file can't be mounted on Windows containers);
+rem an older shared\AGENTS.md moves there once.
+if not exist shared\instructions mkdir shared\instructions
+if not exist shared\instructions\AGENTS.md (
+    if exist shared\AGENTS.md (move /y shared\AGENTS.md shared\instructions\AGENTS.md >nul) else type nul > shared\instructions\AGENTS.md
+)
 rem Leftovers of a killed launcher (Ctrl-C ends a batch file without cleanup).
 forfiles /p shared\.launch /d -1 /c "cmd /c if @isdir==TRUE rd /s /q @path" >nul 2>&1
 call :seedgit

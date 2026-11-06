@@ -7,14 +7,14 @@
 # mount at start and after the command; rsync copies only what changed.
 set -u
 home=${HERMES_HOME:-$HOME/.hermes}
-data=/home/agent/.hermes-config
+data=${AGENTS_HOME:-/home/agent}/.hermes-config
 # Hermes' bootstrap state lives in the one revision dir under installs/; skipped if that isn't unique.
 revisions=("$home"/installs/*/)
 bootstrap=
 if [ "${#revisions[@]}" = 1 ] && [ -d "${revisions[0]}" ]; then bootstrap=${revisions[0]}bootstrap; fi
 deps=$data/.plugin-deps
 # Dependency generations the image ships, one per line; differs on every build.
-image_generations=/home/agent/.hermes-image-generations
+image_generations=${AGENTS_HOME:-/home/agent}/.hermes-image-generations
 
 # Not state: the image's code and dependency store, and what belongs to this container's
 # processes (pids would collide with the next container's, locks die with their holder).

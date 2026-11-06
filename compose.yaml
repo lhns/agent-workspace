@@ -13,26 +13,30 @@ x-workspace: &workspace
   bind:
     create_host_path: false
 
-# Directory mount: git rewrites config via lockfile + rename, which a single-file mount breaks.
-x-git: &git ./shared/git:/home/agent/.config/git
+# In-container paths come from two variables, never hardcoded in the scripts (under Git Bash on
+# Windows an absolute /opt/... would resolve into Git's folder). Defaults are the Linux values.
+#   AGENTS_HOME  the agent user's home
+#   AGENTS_DIR   agent-workspace's own files: agents/ (scripts), launch/ (this run's hand-off),
+#                instructions/ (your AGENTS.md); the base service has shared/ instead of the last two
+# Single files can't be bind-mounted on Windows containers, so all mounts below are directories.
 
-# Mounted, not built in: script edits need no rebuild. Each service's command runs it.
-x-start: &start ./agents/start.sh:/usr/local/lib/agents-start.sh:ro
-# Written into each harness's global instructions at start (agents/start.sh): these notes, then the user's file.
-x-environment: &environment ./agents/environment.md:/usr/local/lib/agents-environment.md:ro
-x-user-instructions: &user-instructions ./shared/AGENTS.md:/opt/agents-user.md:ro
+# Directory mount: git rewrites config via lockfile + rename, which a single-file mount breaks.
+x-git: &git ./shared/git:${AGENTS_HOME:-/home/agent}/.config/git
+
+# Mounted, not built in: script edits need no rebuild. start.sh, menu.sh, docker.sh, environment.md
+# and each harness's harness.sh are in it; every service's command runs start.sh.
+x-agents: &agents ./agents:${AGENTS_DIR:-/opt/agent-workspace}/agents:ro
+# Your instructions, appended to the generated ones at start (agents/start.sh, ADR 25).
+x-instructions: &instructions ./shared/instructions:${AGENTS_DIR:-/opt/agent-workspace}/instructions:ro
 # Disposable caches and downloaded tools on the daemon: cheap on a remote Docker, kept across runs (ADR 25).
-x-cache: &cache cache:/home/agent/.cache
-x-menu: &menu ./agents/menu.sh:/usr/local/lib/agents-menu.sh:ro
-x-docker: &docker ./agents/docker.sh:/usr/local/lib/agents-docker.sh:ro
+x-cache: &cache cache:${AGENTS_HOME:-/home/agent}/.cache
 # The seed key for Docker (agents/docker.sh): enrolled once, shared by every harness. The launchers create it.
-x-remote-docker: &remote-docker ./shared/remote-docker:/home/agent/.remote-docker
-# What agents/launch.sh decided for this run (args, resume mode); each service also mounts its
-# own agents/<harness>/harness.sh (session lookup, picker) at /usr/local/lib/agents-harness.sh.
+x-remote-docker: &remote-docker ./shared/remote-docker:${AGENTS_HOME:-/home/agent}/.remote-docker
+# What agents/launch.sh decided for this run (args, resume mode).
 x-launch: &launch
   type: bind
   source: ./shared/.launch
-  target: /opt/launch
+  target: ${AGENTS_DIR:-/opt/agent-workspace}/launch
   read_only: true
   # The launchers create it; never as root via a plain `docker compose run`. So a plain
   # `docker compose run <harness>` needs one launcher run first (README, Settings).
@@ -57,6 +61,8 @@ x-harness: &harness
   working_dir: ${AGENTS_WORKSPACE_TARGET:-/workspace}
   env_file: .env
   environment:
+    AGENTS_DIR: ${AGENTS_DIR:-/opt/agent-workspace}
+    AGENTS_HOME: ${AGENTS_HOME:-/home/agent}
     # Shell value wins over .env; read by agents/start.sh.
     AGENTS_AUTORESUME: ${AGENTS_AUTORESUME:-}
     AGENTS_NONINTERACTIVE: ${AGENTS_NONINTERACTIVE:-}
@@ -78,111 +84,92 @@ services:
     image: agent-workspace-base
     stdin_open: true
     tty: true
-    entrypoint: [bash, /opt/agents/launch.sh]
+    entrypoint: [bash, "${AGENTS_DIR:-/opt/agent-workspace}/agents/launch.sh"]
     environment:
+      AGENTS_DIR: ${AGENTS_DIR:-/opt/agent-workspace}
+      AGENTS_HOME: ${AGENTS_HOME:-/home/agent}
       AGENTS_WORKSPACE_TARGET: ${AGENTS_WORKSPACE_TARGET:-/workspace}
       # Shell value wins over .env, like for the harnesses.
       AGENTS_HARNESS: ${AGENTS_HARNESS:-}
       AGENTS_NONINTERACTIVE: ${AGENTS_NONINTERACTIVE:-}
       AGENTS_RUN_ID: ${AGENTS_RUN_ID:-}
     volumes:
-      - ./agents:/opt/agents:ro
-      - ./shared:/opt/shared
+      - *agents
+      - ./shared:${AGENTS_DIR:-/opt/agent-workspace}/shared
 
   claude:
     <<: *harness
-    command: [bash, /usr/local/lib/agents-start.sh, claude]
+    command: [bash, "${AGENTS_DIR:-/opt/agent-workspace}/agents/start.sh", claude]
     build: { context: ./agents/claude, args: *proxy }
     volumes:
       - *workspace
       - *git
-      - ./agents/claude/config:/home/agent/.claude
-      - *user-instructions
+      - ./agents/claude/config:${AGENTS_HOME:-/home/agent}/.claude
+      - *instructions
+      - *agents
       - *cache
-      - *start
-      - *environment
-      - *menu
-      - *docker
       - *remote-docker
       - *launch
-      - ./agents/claude/harness.sh:/usr/local/lib/agents-harness.sh:ro
 
   opencode:
     <<: *harness
-    command: [bash, /usr/local/lib/agents-start.sh, opencode]
+    command: [bash, "${AGENTS_DIR:-/opt/agent-workspace}/agents/start.sh", opencode]
     build: { context: ./agents/opencode, args: *proxy }
     volumes:
       - *workspace
       - *git
-      - ./agents/opencode/config:/home/agent/.config/opencode
-      - ./agents/opencode/data:/home/agent/.local/share/opencode
-      - *user-instructions
+      - ./agents/opencode/config:${AGENTS_HOME:-/home/agent}/.config/opencode
+      - ./agents/opencode/data:${AGENTS_HOME:-/home/agent}/.local/share/opencode
+      - *instructions
+      - *agents
       - *cache
-      - *start
-      - *environment
-      - *menu
-      - *docker
       - *remote-docker
       - *launch
-      - ./agents/opencode/harness.sh:/usr/local/lib/agents-harness.sh:ro
 
   pi:
     <<: *harness
-    command: [bash, /usr/local/lib/agents-start.sh, pi]
+    command: [bash, "${AGENTS_DIR:-/opt/agent-workspace}/agents/start.sh", pi]
     build: { context: ./agents/pi, args: *proxy }
     volumes:
       - *workspace
       - *git
-      - ./agents/pi/config:/home/agent/.pi/agent
-      - *user-instructions
+      - ./agents/pi/config:${AGENTS_HOME:-/home/agent}/.pi/agent
+      - *instructions
+      - *agents
       - *cache
-      - *start
-      - *environment
-      - *menu
-      - *docker
       - *remote-docker
       - *launch
-      - ./agents/pi/harness.sh:/usr/local/lib/agents-harness.sh:ro
 
   cline:
     <<: *harness
-    command: [bash, /usr/local/lib/agents-start.sh, cline]
+    command: [bash, "${AGENTS_DIR:-/opt/agent-workspace}/agents/start.sh", cline]
     build: { context: ./agents/cline, args: *proxy }
     volumes:
       - *workspace
       - *git
-      - ./agents/cline/config:/home/agent/.cline
-      - *user-instructions
+      - ./agents/cline/config:${AGENTS_HOME:-/home/agent}/.cline
+      - *instructions
+      - *agents
       - *cache
-      - *start
-      - *environment
-      - *menu
-      - *docker
       - *remote-docker
       - *launch
-      - ./agents/cline/harness.sh:/usr/local/lib/agents-harness.sh:ro
 
   hermes:
     <<: *harness
-    command: [bash, /usr/local/lib/agents-start.sh, hermes]
+    command: [bash, "${AGENTS_DIR:-/opt/agent-workspace}/agents/start.sh", hermes]
     build: { context: ./agents/hermes, args: *proxy }
     # Hermes refuses a bind-mounted home, so this copies its state from and back to the
     # config folder around each run. Mounted, not built in: script edits need no rebuild.
-    entrypoint: [bash, /usr/local/lib/hermes-entrypoint.sh]
+    entrypoint: [bash, "${AGENTS_DIR:-/opt/agent-workspace}/agents/hermes/entrypoint.sh"]
     volumes:
       - *workspace
       - *git
-      - ./agents/hermes/config:/home/agent/.hermes-config
-      - ./agents/hermes/entrypoint.sh:/usr/local/lib/hermes-entrypoint.sh:ro
-      - *user-instructions
+      - ./agents/hermes/config:${AGENTS_HOME:-/home/agent}/.hermes-config
+      - *instructions
+      - *agents
       - *cache
-      - *start
-      - *environment
-      - *menu
-      - *docker
       - *remote-docker
       - *launch
-      - ./agents/hermes/harness.sh:/usr/local/lib/agents-harness.sh:ro
 
 volumes:
   cache: {}

@@ -1,6 +1,6 @@
 # 25. Disposable caches in one Docker volume; generated global instructions
 
-Status: Accepted. Refines [ADR 16](0016-state-in-host-folders.md) (one volume, caches only) and [ADR 3](0003-share-everything-harness-independent.md) (the global instructions are generated at start).
+Status: Accepted. Refines [ADR 16](0016-state-in-host-folders.md) (one volume, caches only) and [ADR 3](0003-share-everything-harness-independent.md) (the global instructions are generated at start). The user file now lives at `shared/instructions/AGENTS.md`, a directory mount at `$AGENTS_DIR/instructions` (single files cannot be mounted on Windows containers).
 
 ## Context
 - With a remote Docker daemon the workspace and every host-folder mount are served over the network, so each write is slow. Agents downloaded tools, caches and scratch data into the workspace. The container filesystem is cheap but `--rm` discards it each run. A named volume lives on the daemon: cheap and persistent.
