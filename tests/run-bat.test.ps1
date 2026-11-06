@@ -3,13 +3,14 @@
 # failing refs) and `image inspect` when STUB_INSPECT_FAIL=1. For the base service it plays the core
 # (agents/launch.sh, tested by tests/launch.test.sh): it records its arguments and writes the hand-off
 # files from STUB_HARNESS (default claude) and STUB_TARGET, or exits with STUB_CORE_CODE, or writes
-# nothing for STUB_NO_HARNESS=1. `compose run` also records AGENTS_WORKSPACE_TARGET and AGENTS_RUN_ID.
+# nothing for STUB_NO_HARNESS=1. `compose run` also records AGENTS_WORKSPACE_TARGET, AGENTS_RUN_ID and the
+# Windows-container variables. `docker info` answers STUB_OSTYPE (default linux) and is not logged.
 # Runs on a temp copy of the repo, so it leaves no state behind. Needs Windows PowerShell 5.1
 # (Add-Type -OutputAssembly).
 $ErrorActionPreference = 'Stop'
 $src = (Resolve-Path "$PSScriptRoot\..").Path
 $work = Join-Path ([IO.Path]::GetTempPath()) "run-bat-test-$PID"
-robocopy $src $work /E /XD .git workspace shared config data /XF .git .env .build.sha256 /NFL /NDL /NJH /NJS /NP | Out-Null
+robocopy $src $work /E /XD .git workspace shared config data /XF .git .env .build.sha256 .build-windows.sha256 /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
 
 $log = Join-Path $work 'docker.log'
@@ -17,6 +18,11 @@ $env:STUB_LOG = $log
 New-Item -ItemType Directory "$work\stub" | Out-Null
 $stub = @'
 public class P { public static void Main(string[] a) {
+    if (a.Length > 0 && a[0] == "info") {
+        var ot = System.Environment.GetEnvironmentVariable("STUB_OSTYPE");
+        System.Console.WriteLine(string.IsNullOrEmpty(ot) ? "linux" : ot);
+        return;
+    }
     var shown = new System.Collections.Generic.List<string>();
     foreach (var s in a) shown.Add(s.Contains(" ") ? "\"" + s + "\"" : s);
     var logf = System.Environment.GetEnvironmentVariable("STUB_LOG");
@@ -26,6 +32,9 @@ public class P { public static void Main(string[] a) {
     if (a.Length > 1 && a[0] == "compose" && a[1] == "run") {
         System.IO.File.AppendAllText(logf + ".target", target + "\n");
         System.IO.File.AppendAllText(logf + ".id", id + "\n");
+        var ev = new System.Collections.Generic.List<string>();
+        foreach (var n in new[] { "AGENTS_PLATFORM", "AGENTS_IMAGE_SUFFIX", "AGENTS_DOCKERFILE", "AGENTS_DIR", "AGENTS_HOME" }) ev.Add(System.Environment.GetEnvironmentVariable(n));
+        System.IO.File.AppendAllText(logf + ".env", string.Join("|", ev) + "\n");
         var bi = System.Array.IndexOf(a, "base");
         if (bi > 1) {
             var d = "shared\\.launch\\" + id;
@@ -60,7 +69,7 @@ public class P { public static void Main(string[] a) {
 '@
 Add-Type -OutputType ConsoleApplication -OutputAssembly "$work\stub\docker.exe" -TypeDefinition $stub
 $env:PATH = "$work\stub;$env:PATH"
-Remove-Item Env:WORKSPACE_DIR, Env:AGENTS_HARNESS, Env:AGENTS_NONINTERACTIVE, Env:AGENTS_LOCAL_BUILD, Env:AGENTS_IMAGE_PREFIX, Env:STUB_PULL_FAIL, Env:STUB_INSPECT_FAIL, Env:STUB_HARNESS, Env:STUB_TARGET, Env:STUB_CORE_CODE, Env:STUB_NO_HARNESS, Env:STUB_NO_RESULT -ErrorAction SilentlyContinue
+Remove-Item Env:WORKSPACE_DIR, Env:AGENTS_HARNESS, Env:AGENTS_NONINTERACTIVE, Env:AGENTS_LOCAL_BUILD, Env:AGENTS_IMAGE_PREFIX, Env:STUB_PULL_FAIL, Env:STUB_INSPECT_FAIL, Env:STUB_HARNESS, Env:STUB_TARGET, Env:STUB_CORE_CODE, Env:STUB_NO_HARNESS, Env:STUB_NO_RESULT, Env:STUB_OSTYPE, Env:AGENTS_PLATFORM -ErrorAction SilentlyContinue
 $failures = 0
 function Get-Hash([string[]]$files) { (Get-FileHash -Algorithm SHA256 -InputStream ([IO.MemoryStream]::new([byte[]]($files | ForEach-Object { [IO.File]::ReadAllBytes("$work\$_") })))).Hash.ToLower() }
 $baseDf = 'agents\base\Dockerfile'
@@ -69,12 +78,13 @@ $run = 'compose run --rm -T'
 
 # Runs the real launcher; stdin from NUL so the `pause` after "Edit .env first" returns.
 function Invoke-Launcher([string]$arguments, [string]$cwd = $work) {
-    Remove-Item $log, "$log.target", "$log.id", "$log.dir", "$log.base" -ErrorAction SilentlyContinue
+    Remove-Item $log, "$log.target", "$log.id", "$log.dir", "$log.base", "$log.env" -ErrorAction SilentlyContinue
     Push-Location $cwd
     try { cmd /c """$work\run-agent.bat"" $arguments < NUL > ""$work\out.txt"" 2>&1" } finally { Pop-Location }
     $script:code = $LASTEXITCODE
     $script:calls = if (Test-Path $log) { @(Get-Content $log) } else { @() }
     $script:targets = if (Test-Path "$log.target") { @(Get-Content "$log.target") } else { @() }
+    $script:envs = if (Test-Path "$log.env") { @(Get-Content "$log.env") } else { @() }
     $script:ids = if (Test-Path "$log.id") { @(Get-Content "$log.id") } else { @() }
     $script:dirseen = if (Test-Path "$log.dir") { @(Get-Content "$log.dir")[-1] } else { $null }
     $script:baseargs = if (Test-Path "$log.base") { Get-Content "$log.base" -Raw } else { $null }
@@ -228,6 +238,77 @@ try {
     Invoke-Launcher 'claude'
     Remove-Item Env:STUB_TARGET
     Check 'the target the core wrote is exported for the harness run' ($targets[-1] -eq '/guarded' -and $targets[0] -ne '/guarded')
+
+    # Windows containers: the daemon's OSType (or AGENTS_PLATFORM) picks the -windows names, hash files, tags and paths.
+    $winFiles = 'agents\base\Dockerfile.windows', 'agents\base\install.ps1'
+    $winEnv = 'windows|-windows|Dockerfile.windows|C:/agent-workspace|C:/Users/ContainerAdministrator'
+    Remove-Item "$work\agents\*\.build*.sha256"
+    Invoke-Launcher 'claude'
+    Check 'linux: no Windows variables for compose' ($envs[-1] -eq 'linux||||')
+    Remove-Item "$work\agents\*\.build*.sha256"
+    $env:AGENTS_LOCAL_BUILD = '1'
+    $env:STUB_OSTYPE = 'windows'
+    Invoke-Launcher 'claude'
+    Remove-Item Env:STUB_OSTYPE
+    Check 'windows: base and harness are built under their -windows names' (($calls -join '|') -eq "compose build base|$run base claude|image inspect agent-workspace-base-windows|compose build claude|$run claude")
+    Check 'windows: compose gets the Windows variables' ($envs[-1] -eq $winEnv)
+    Check 'windows: the hash files are .build-windows.sha256, over the Windows files' ((Get-Content "$work\agents\base\.build-windows.sha256") -eq (Get-Hash $winFiles) -and (Get-Content "$work\agents\claude\.build-windows.sha256") -eq (Get-Hash ($winFiles + 'agents\claude\Dockerfile.windows')) -and -not (Test-Path "$work\agents\base\.build.sha256"))
+    $expected = if ($work -match '^[cC]:\\') { "C:$($work.Substring(2))\workspace" } else { 'C:\workspace' }
+    Check 'windows: the default workspace is mounted at its own path (C:)' ($targets[0] -eq $expected)
+    $env:STUB_OSTYPE = 'windows'
+    Invoke-Launcher 'claude'
+    Remove-Item Env:STUB_OSTYPE
+    Check 'windows: a second launch builds nothing' (($calls -join '|') -eq "image inspect agent-workspace-base-windows|$run base claude|image inspect agent-workspace-claude-windows|$run claude")
+    New-Item -ItemType Directory "$work\win ws (x)" | Out-Null
+    $env:STUB_OSTYPE = 'windows'
+    $env:WORKSPACE_DIR = "$work\win ws (x)"
+    Invoke-Launcher 'claude'
+    Remove-Item Env:WORKSPACE_DIR
+    Remove-Item Env:STUB_OSTYPE
+    $expected = if ($work -match '^[cC]:\\') { "C:$($work.Substring(2))\win ws (x)" } else { 'C:\workspace' }
+    Check 'windows: WORKSPACE_DIR with a space and parentheses is mounted at its own path' ($code -eq 0 -and $targets[0] -eq $expected)
+    # Another drive: a substituted drive stands in for D:.
+    New-Item -ItemType Directory "$work\drive" | Out-Null
+    $drive = foreach ($l in "Y", "X", "W", "V") { if (-not (Test-Path "${l}:\")) { $l; break } }
+    if ($drive) { subst "${drive}:" "$work\drive" }
+    if ($drive -and (Test-Path "${drive}:\")) {
+        $env:STUB_OSTYPE = 'windows'
+        $env:WORKSPACE_DIR = "${drive}:\"
+        Invoke-Launcher 'claude'
+        Remove-Item Env:WORKSPACE_DIR
+        Remove-Item Env:STUB_OSTYPE
+        subst "${drive}:" /d
+        Check 'windows: another drive falls back to C:\workspace' ($code -eq 0 -and $targets[0] -eq 'C:\workspace')
+    }
+    # The tag is the hash plus -windows.
+    Remove-Item "$work\agents\*\.build*.sha256"
+    Remove-Item Env:AGENTS_LOCAL_BUILD
+    $env:STUB_OSTYPE = 'windows'
+    Invoke-Launcher 'claude'
+    Remove-Item Env:STUB_OSTYPE
+    $wBase = "${prefix}-base:$(Get-Hash $winFiles)-windows"
+    $wClaude = "${prefix}-claude:$(Get-Hash ($winFiles + 'agents\claude\Dockerfile.windows'))-windows"
+    Check 'windows: prebuilt images are pulled as <prefix>-<name>:<hash>-windows' (($calls -join '|') -eq "pull $wBase|tag $wBase agent-workspace-base-windows|rmi $wBase|$run base claude|pull $wClaude|tag $wClaude agent-workspace-claude-windows|rmi $wClaude|$run claude")
+    Remove-Item "$work\agents\*\.build*.sha256"
+    $env:AGENTS_PLATFORM = 'windows'
+    Invoke-Launcher 'claude'
+    Remove-Item Env:AGENTS_PLATFORM
+    Check 'AGENTS_PLATFORM=windows beats a Linux daemon' ($envs[-1] -eq $winEnv)
+    $env:STUB_OSTYPE = 'windows'
+    $env:AGENTS_PLATFORM = 'linux'
+    Invoke-Launcher 'claude'
+    Remove-Item Env:AGENTS_PLATFORM
+    Remove-Item Env:STUB_OSTYPE
+    Check 'AGENTS_PLATFORM=linux beats a Windows daemon' ($envs[-1] -eq 'linux||||')
+    Add-Content "$work\.env" 'AGENTS_PLATFORM=windows'
+    Invoke-Launcher 'claude'
+    Check 'AGENTS_PLATFORM in .env is used' ($envs[-1] -eq $winEnv)
+    $env:AGENTS_PLATFORM = 'linux'
+    Invoke-Launcher 'claude'
+    Remove-Item Env:AGENTS_PLATFORM
+    Check 'a shell AGENTS_PLATFORM beats .env' ($envs[-1] -eq 'linux||||')
+    (Get-Content "$work\.env") -notmatch '^AGENTS_PLATFORM=' | Set-Content "$work\.env"
+    Remove-Item "$work\agents\*\.build*.sha256"
 
     $env:STUB_NO_HARNESS = '1'
     Invoke-Launcher '--help'

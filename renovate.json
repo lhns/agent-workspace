@@ -6,22 +6,22 @@
   "gitAuthor": "Renovate Bot <bot@renovateapp.com>",
   "customManagers": [
     {
-      "description": "ARG <NAME>_VERSION pinned in agents/*/Dockerfile, annotated with '# renovate: datasource=... depName=...'; an optional ARG <NAME>_COMMIT on the next line holds the digest.",
+      "description": "ARG <NAME>_VERSION pinned in agents/*/Dockerfile and Dockerfile.windows, annotated with '# renovate: datasource=... depName=... [versioning=...] [extractVersion=...]'; an optional ARG <NAME>_COMMIT on the next line holds the digest. The checksums next to a Windows tool version (GIT_SHA256, PYTHON_SHA256) are updated by hand.",
       "customType": "regex",
-      "managerFilePatterns": ["/^agents/.+/Dockerfile$/"],
+      "managerFilePatterns": ["/^agents/.+/Dockerfile(\\.windows)?$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+ARG \\w+_VERSION=(?<currentValue>\\S+)(?:\\s+ARG \\w+_COMMIT=(?<currentDigest>[a-f0-9]{40}))?"
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?\\s+ARG \\w+_VERSION=(?<currentValue>\\S+)(?:\\s+ARG \\w+_COMMIT=(?<currentDigest>[a-f0-9]{40}))?"
       ]
     }
   ],
   "packageRules": [
     {
       "description": "The base image is built locally by the launchers, not pulled.",
-      "matchPackageNames": ["agent-workspace-base"],
+      "matchPackageNames": ["agent-workspace-base", "agent-workspace-base-windows"],
       "enabled": false
     },
     {
-      "description": "Stay on the node 24 LTS line; only its digest moves.",
+      "description": "Stay on the node 24 LTS line (the Linux image and the Windows zip alike); only its digest and minor releases move.",
       "matchPackageNames": ["node"],
       "matchUpdateTypes": ["major"],
       "enabled": false

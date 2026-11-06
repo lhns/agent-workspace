@@ -1,0 +1,8 @@
+# escape=`
+FROM agent-workspace-base-windows
+# renovate: datasource=npm depName=opencode-ai
+ARG OPENCODE_VERSION=1.19.5
+# The cache goes outside ~/.cache (a volume target stays empty) and is dropped again.
+RUN npm install -g --cache C:\npm-cache opencode-ai@%OPENCODE_VERSION% && rmdir /s /q C:\npm-cache
+# The image pins the version (Renovate); an in-container update is lost on exit.
+ENV OPENCODE_DISABLE_AUTOUPDATE=1

@@ -14,9 +14,10 @@ instructions="$HOME/.claude/CLAUDE.md"
 # A harness's own "continue" fails or falls back to another folder's session when there is none.
 find_session() {
     local key
-    # Folder name with every other character replaced; Claude shortens names over
-    # 200 characters with a hash, which isn't reproduced: no resume then.
-    key=${PWD//[^a-zA-Z0-9]/-}
+    # The folder in the OS's own form (C:\x on Windows) with every other character replaced;
+    # Claude shortens names over 200 characters with a hash, which isn't reproduced: no resume then.
+    key=$(native_cwd)
+    key=${key//[^a-zA-Z0-9]/-}
     [ ${#key} -le 200 ] || return 1
     compgen -G "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$key/*.jsonl" >/dev/null || return 1
     resume=(claude --continue)

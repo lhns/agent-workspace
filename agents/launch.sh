@@ -21,6 +21,8 @@ AGENTS_DIR=${AGENTS_DIR:-/opt/agent-workspace}
 dir=$AGENTS_DIR/agents
 home=${AGENTS_HOME:-/home/agent}
 shared=${AGENTS_SHARED:-$AGENTS_DIR/shared}
+# shellcheck source=agents/os.sh
+. "$dir/os.sh"
 # shellcheck source=agents/menu.sh
 . "$dir/menu.sh"
 
@@ -50,14 +52,22 @@ die() { echo "$*" >&2; exit 1; }
 launch=$shared/.launch/${AGENTS_RUN_ID:?AGENTS_RUN_ID is not set}
 [ -d "$launch" ] || die "$launch does not exist"
 
-# Every folder with a harness.sh is a harness (alphabetical, so the menu is stable).
-names=()
+# Every folder with a harness.sh is a harness (alphabetical, so the menu is stable). On Windows
+# only those with a Dockerfile.windows are available; the others are refused by name.
+names=() unavailable=()
 for f in "$dir"/*/harness.sh; do
     [ -f "$f" ] || continue
     f=${f%/harness.sh}
-    names+=("${f##*/}")
+    if is_windows && [ ! -f "$f/Dockerfile.windows" ]; then unavailable+=("${f##*/}"); else names+=("${f##*/}"); fi
 done
 known_harness() { [ -n "$1" ] && printf '%s\n' "${names[@]}" | grep -qxF -- "$1"; }
+# Unknown, or known but not available on this platform. $2 is appended to the unknown message.
+unknown_harness() {
+    if [ ${#unavailable[@]} -gt 0 ] && printf '%s\n' "${unavailable[@]}" | grep -qxF -- "$1"; then
+        die "'$1' is not available in Windows containers (available: ${names[*]})"
+    fi
+    die "Unknown harness '$1'${2:-}"
+}
 
 h='' hflag='' rmode='' nonint='' dashdash='' exec_cmd=()
 # --workdir is applied by the host (the mount source must be known before this runs); only its
@@ -84,7 +94,7 @@ while [ $# -gt 0 ]; do
 done
 # The first remaining argument is the harness, unless --harness or -- already ended the options.
 if [ -z "$hflag" ] && [ -z "$dashdash" ] && [ ${#exec_cmd[@]} -eq 0 ] && [ $# -gt 0 ]; then
-    known_harness "$1" || die "Unknown harness '$1' (put -- before arguments meant for the harness)"
+    known_harness "$1" || unknown_harness "$1" " (put -- before arguments meant for the harness)"
     h=$1; shift
     if [ "${1:-}" = -- ]; then shift; fi
 fi
@@ -92,18 +102,42 @@ if [ ${#exec_cmd[@]} -gt 0 ]; then hargs=("${exec_cmd[@]}"); else hargs=("$@"); 
 
 # A flag or positional harness beats AGENTS_HARNESS; -y beats AGENTS_NONINTERACTIVE (any non-empty value).
 [ -n "$h" ] || h=${AGENTS_HARNESS:-}
-[ -z "$h" ] || known_harness "$h" || die "Unknown harness '$h'"
+[ -z "$h" ] || known_harness "$h" || unknown_harness "$h"
 nonint=${nonint:-${AGENTS_NONINTERACTIVE:-}}
 
 # The workspace is mounted at its host path, so harnesses that key sessions by directory keep
-# them per host folder. Paths that would hide the container's own directories fall back to /workspace.
+# them per host folder. Paths that would hide the container's own directories fall back to
+# /workspace (C:\workspace on Windows) with a note.
 target=${AGENTS_WORKSPACE_TARGET:?AGENTS_WORKSPACE_TARGET is not set}
-case $target in
-    / | /home | "$home" | "$home"/* | /usr | /usr/* | /etc | /etc/* | /bin | /bin/* | /sbin | /sbin/* \
-        | /lib* | /proc | /proc/* | /sys | /sys/* | /dev | /dev/* | /opt | /opt/* | /var | /var/*)
-        echo "Note: $target would hide a container directory; mounting the workspace at /workspace, so conversations are not kept per folder." >&2
-        target=/workspace ;;
-esac
+if is_windows; then
+    # The target is a Windows path (C:\x) and stays in that form for compose. The guard compares
+    # it as an MSYS path, case-insensitively. Only C: can be mounted at its own path.
+    fallback='C:\workspace'
+    [ "$target" != /workspace ] || target=$fallback
+    t=$(posix_path "$target")
+    agents_dir=$(posix_path "$AGENTS_DIR")
+    home_dir=$(posix_path "$home")
+    shopt -s nocasematch
+    case $t in /c | /c/*) ;; *) t=/ ;; esac
+    case $t in
+        / | /c | /c/Windows | /c/Windows/* | "/c/Program Files"* | /c/ProgramData | /c/git | /c/git/* \
+            | /c/Users | /c/Users/ContainerAdministrator | /c/Users/ContainerAdministrator/* \
+            | /c/npm-global | /c/npm-global/* | /c/node | /c/node/* | /c/python | /c/python/* | /c/tools | /c/tools/* \
+            | "$agents_dir" | "$agents_dir"/* | "$home_dir" | "$home_dir"/*)
+            echo "Note: $target would hide a container directory; mounting the workspace at $fallback, so conversations are not kept per folder." >&2
+            target=$fallback ;;
+        # Back to the Windows form: the container's environment may have turned it into /c/x.
+        *) target=$(win_path "$t") ;;
+    esac
+    shopt -u nocasematch
+else
+    case $target in
+        / | /home | "$home" | "$home"/* | /usr | /usr/* | /etc | /etc/* | /bin | /bin/* | /sbin | /sbin/* \
+            | /lib* | /proc | /proc/* | /sys | /sys/* | /dev | /dev/* | /opt | /opt/* | /var | /var/*)
+            echo "Note: $target would hide a container directory; mounting the workspace at /workspace, so conversations are not kept per folder." >&2
+            target=/workspace ;;
+    esac
+fi
 
 # --sessions needs a terminal; checked before the harness menu so it fails early.
 if [ "$rmode" = pick ]; then

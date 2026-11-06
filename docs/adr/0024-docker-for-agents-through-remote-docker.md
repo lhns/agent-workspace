@@ -1,6 +1,6 @@
 # 24. Docker for agents through a remote-docker client in each container
 
-Status: Accepted. Refines [ADR 3](0003-share-everything-harness-independent.md) (shared state: `shared/remote-docker`) and [ADR 4](0004-shared-base-image.md) (the shared base image now ships the client).
+Status: Accepted. Refines [ADR 3](0003-share-everything-harness-independent.md) (shared state: `shared/remote-docker`) and [ADR 4](0004-shared-base-image.md) (the shared base image now ships the client). Not available in Windows containers, see [ADR 26](0026-windows-containers.md).
 
 ## Context
 Agents could not build or run containers: no docker CLI, no daemon. Giving the container the host's Docker socket hands over the host, and a privileged Docker-in-Docker container needs privileges the launcher should not ask for. [remote-docker](https://github.com/lhns/remote-docker) is a docker CLI (with compose) that talks to a remote workspace daemon over SSH or WebSocket. Facts that shaped the design (checked against v0.16.1):

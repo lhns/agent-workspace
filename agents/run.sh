@@ -30,11 +30,26 @@ elif [ ! -d "$ws" ]; then
     echo "WORKSPACE_DIR '$ws' does not exist" >&2; exit 1
 fi
 
+# Linux or Windows containers: whatever the daemon runs, unless AGENTS_PLATFORM says otherwise.
+# Windows containers use their own images, names and paths (ADR 26); the Linux ones stay as they were.
+platform=${AGENTS_PLATFORM:-$(envval AGENTS_PLATFORM)}
+[ -n "$platform" ] || platform=$(docker info -f '{{.OSType}}' 2>/dev/null) || platform=
+case $platform in windows) ;; *) platform=linux ;; esac
+export AGENTS_PLATFORM=$platform
+
 # The workspace is mounted at its host path (the container side guards it, see launch.sh).
-AGENTS_WORKSPACE_TARGET=$(cd "${ws:-workspace}" && pwd -P)
+if [ "$platform" = windows ]; then
+    export AGENTS_IMAGE_SUFFIX=-windows AGENTS_DOCKERFILE=Dockerfile.windows
+    export AGENTS_DIR=C:/agent-workspace AGENTS_HOME=C:/Users/ContainerAdministrator
+    # In Windows form. Only C: can be mounted at its own path; any other drive goes to C:\workspace.
+    AGENTS_WORKSPACE_TARGET=$(cygpath -aw "${ws:-workspace}" 2>/dev/null) || AGENTS_WORKSPACE_TARGET=
+    case $AGENTS_WORKSPACE_TARGET in [Cc]:\\*) ;; *) AGENTS_WORKSPACE_TARGET='C:\workspace' ;; esac
+else
+    AGENTS_WORKSPACE_TARGET=$(cd "${ws:-workspace}" && pwd -P)
+fi
 export AGENTS_WORKSPACE_TARGET
-# Git Bash on Windows would hand docker C:/... instead; this is a container path.
-export MSYS2_ENV_CONV_EXCL="AGENTS_WORKSPACE_TARGET${MSYS2_ENV_CONV_EXCL:+;$MSYS2_ENV_CONV_EXCL}"
+# Git Bash on Windows would hand docker C:/... instead; these are container paths.
+export MSYS2_ENV_CONV_EXCL="AGENTS_WORKSPACE_TARGET;AGENTS_DIR;AGENTS_HOME${MSYS2_ENV_CONV_EXCL:+;$MSYS2_ENV_CONV_EXCL}"
 
 # Prebuilt images come from ghcr.io unless AGENTS_LOCAL_BUILD is non-empty.
 local_build=${AGENTS_LOCAL_BUILD:-$(envval AGENTS_LOCAL_BUILD)}
@@ -45,24 +60,37 @@ prefix=${prefix:-ghcr.io/lhns/agent-workspace}
 # Without a terminal (CI, pipes) compose can't allocate a tty and fails; -T skips it.
 tty=; [ -t 0 ] || tty=-T
 
+# What makes up an image: its Dockerfiles, and on Windows the base's install script. A harness
+# image includes the base's files, so it is rebuilt with the base.
+image_files() { # base|harness
+    if [ "$platform" = windows ]; then
+        cat agents/base/Dockerfile.windows agents/base/install.ps1
+        [ "$1" = base ] || cat "agents/$1/Dockerfile.windows"
+    else
+        cat agents/base/Dockerfile
+        [ "$1" = base ] || cat "agents/$1/Dockerfile"
+    fi
+}
+
 # Update an image (base or a harness) only when its Dockerfiles changed since the last time
-# (much faster than asking docker). The hash is also the ghcr tag, so a pull gets exactly this
-# checkout's image; an edited Dockerfile misses the registry and builds locally. Docker's layer
-# cache keeps a local rebuild short. Usage: ensure_image <base|harness> <Dockerfile>...
+# (much faster than asking docker). The hash is also the ghcr tag (plus -windows on Windows), so a
+# pull gets exactly this checkout's image; an edited Dockerfile misses the registry and builds
+# locally. Docker's layer cache keeps a local rebuild short. Usage: ensure_image <base|harness>
 ensure_image() {
-    local name=$1 hashfile new ref pulled=
-    shift
-    hashfile=agents/$name/.build.sha256
-    new=$(cat "$@" | sha256sum | cut -d' ' -f1)
+    local name=$1 suffix="" hashfile new ref image pulled=
+    [ "$platform" != windows ] || suffix=-windows
+    image=agent-workspace-$name$suffix
+    hashfile=agents/$name/.build$suffix.sha256
+    new=$(image_files "$name" | sha256sum | cut -d' ' -f1)
     # A matching hash with the image gone (pruned) counts as changed.
-    if [ "$new" = "$(cat "$hashfile" 2>/dev/null)" ] && docker image inspect "agent-workspace-$name" >/dev/null 2>&1; then
+    if [ "$new" = "$(cat "$hashfile" 2>/dev/null)" ] && docker image inspect "$image" >/dev/null 2>&1; then
         return
     fi
-    ref=$prefix-$name:$new
+    ref=$prefix-$name:$new$suffix
     if [ -z "$local_build" ]; then
         echo "Pulling $name image..."
         if docker pull "$ref"; then
-            docker tag "$ref" "agent-workspace-$name"
+            docker tag "$ref" "$image"
             docker rmi "$ref" >/dev/null || true
             pulled=1
         else
@@ -75,7 +103,7 @@ ensure_image() {
             docker compose build base
         else
             # Build on the published (or already local) base so the layers are shared.
-            ensure_image base agents/base/Dockerfile
+            ensure_image base
             docker compose build "$name"
         fi
     fi
@@ -110,7 +138,7 @@ fi
 
 # The core (options, harness menu, last-harness) runs in the base image, with every argument
 # untouched: Git Bash must not convert them (env conversion stays).
-ensure_image base agents/base/Dockerfile
+ensure_image base
 # Without a terminal the core must not swallow stdin meant for the harness (echo hi | run-agent claude -p).
 if [ -n "$tty" ]; then
     MSYS2_ARG_CONV_EXCL='*' docker compose run --rm -T base "$@" </dev/null || exit $?
@@ -129,7 +157,7 @@ h=$(cat "$launch/harness")
 AGENTS_WORKSPACE_TARGET=$(cat "$launch/target")
 dirs=$(sed -n 's/^dirs="\(.*\)"$/\1/p' "agents/$h/harness.sh")
 for d in $dirs; do mkdir -p "agents/$h/$d"; done
-ensure_image "$h" agents/base/Dockerfile "agents/$h/Dockerfile"
+ensure_image "$h"
 
 # Recorded only now, so a failed pull or build isn't (mv is atomic; the core only computed the content).
 mv -f "$launch/last-harness" shared/.last-harness

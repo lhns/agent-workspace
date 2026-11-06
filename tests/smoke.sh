@@ -2,9 +2,14 @@
 # Startup smoke test, run inside the harness container (see .github/workflows/ci.yml):
 #   ./run-agent.sh --harness <h> --exec bash -c "$(cat tests/smoke.sh)" smoke <h> [expected-workspace-path]
 # No API keys are available, so a login/onboarding screen counts as started.
+# A Windows container has no script(1) and no Docker: there the CI job starts the TUI with
+# `docker run -dt` (a pseudo-console) instead, and that part is skipped here.
 set -u
 h=${1:?usage: smoke.sh <harness> [expected-workspace-path]}
 expected_pwd=${2:-}
+windows=; [ "$(uname -o 2>/dev/null)" != Msys ] || windows=1
+# Paths compared in one form: a Windows program reports C:\..., the shell has /c/...
+norm() { if command -v cygpath >/dev/null; then cygpath -m "$1"; else printf '%s\n' "$1"; fi; }
 
 case $h in
     claude)   bin=claude;   state=$HOME/.claude;           noupdate=DISABLE_AUTOUPDATER ;;
@@ -33,20 +38,26 @@ fi
 echo "== $h: --version"
 "$bin" --version || bad "$bin --version exited $?"
 
-echo "== $h: docker and compose are installed"
-docker --version || bad "docker --version exited $?"
-docker compose version || bad "docker compose version exited $?"
+if [ -z "$windows" ]; then
+    echo "== $h: docker and compose are installed"
+    docker --version || bad "docker --version exited $?"
+    docker compose version || bad "docker compose version exited $?"
+fi
 
 echo "== $h: state dir $state writable"
 if touch "$state/.smoke" 2>/dev/null; then rm -f "$state/.smoke"; else bad "$state not writable"; fi
 
 echo "== $h: cache volume ~/.cache"
 if touch "$HOME/.cache/.smoke" 2>/dev/null; then rm -f "$HOME/.cache/.smoke"; else bad "$HOME/.cache not writable"; fi
-[ "$(npm config get cache)" = "$HOME/.cache/npm" ] || bad "npm cache is $(npm config get cache), expected $HOME/.cache/npm"
+[ "$(norm "$(npm config get cache)")" = "$(norm "$HOME/.cache/npm")" ] || bad "npm cache is $(npm config get cache), expected $HOME/.cache/npm"
 case :$PATH: in *:"$HOME/.cache/bin":*) ;; *) bad "$HOME/.cache/bin is not on PATH" ;; esac
 
 # The TUI must still be running when the timeout hits (exit 124), without crash output.
 echo "== $h: TUI stays up"
+if ! command -v script >/dev/null; then
+    echo "skipped: no script(1) here"
+    exit $fail
+fi
 out=$(mktemp)
 sleep 30 | timeout 25 script -qec "$bin" /dev/null > "$out" 2>&1
 rc=$?
