@@ -18,6 +18,13 @@ jobs:
         shell: pwsh
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
+      - name: wait for the docker daemon
+        shell: pwsh
+        run: |
+          Get-Service docker | Format-List Name,Status,StartType
+          if ((Get-Service docker).Status -ne 'Running') { Start-Service docker }
+          for ($i = 0; $i -lt 30; $i++) { docker info *> $null; if ($LASTEXITCODE -eq 0) { break }; Start-Sleep 5 }
+          docker version
       - name: pull
         continue-on-error: true
         run: bash spike/exp.sh pull
