@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compose's command for every harness: agents-start.sh <harness>. Resumes the last conversation
+# Compose's command for every harness: agents/start.sh <harness>. Resumes the last conversation
 # for the current folder (the workspace is mounted at its host path, so folders differ) or
 # starts fresh, depending on the resume mode (ask, the default | yes | no | pick). Arguments for
 # the harness go after the resume or picker arguments (claude --continue --model x).
@@ -11,7 +11,7 @@
 # Per-harness knowledge (find_session, picker) comes from the mounted agents/<harness>/harness.sh.
 set -u
 AGENTS_DIR=${AGENTS_DIR:-/opt/agent-workspace}
-h=${1:?usage: agents-start.sh <harness>}
+h=${1:?usage: start.sh <harness>}
 
 # docker_up / docker_down: Docker for the agent when AGENTS_DOCKER is set (agents/docker.sh).
 # shellcheck source=agents/docker.sh
