@@ -31,7 +31,3 @@ MSYS2_ARG_CONV_EXCL='*' python3 -c "import sys; print(sys.argv[1])" /tmp/sq/a.db
 echo "cygpath -m /tmp/sq/a.db: $(cygpath -m /tmp/sq/a.db)"
 echo "python3 sees /tmp/x as: $(python3 -c "import os; print(os.path.abspath('/tmp/x'))")"
 
-echo; echo "== winpty with a console (docker run -t)"
-{ sleep 1; printf 'q'; sleep 1; } | winpty bash -c 'read -rsn1 k; echo "winpty read got=[$k]"; [ -t 0 ] && echo "stdin is a tty under winpty"' 2>&1 | head -5
-echo "rc=$?"
-echo "plain: [ -t 0 ]=$([ -t 0 ] && echo yes || echo no) [ -t 1 ]=$([ -t 1 ] && echo yes || echo no)"

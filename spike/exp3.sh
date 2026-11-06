@@ -7,9 +7,9 @@ case ${1:?name} in
 
 shells)
     hdr "shell source details"
-    docker run --rm --user ContainerUser spike-harnesses bash C:/spike/shells2.sh 2>&1
+    timeout 150 docker run --rm --user ContainerUser spike-harnesses bash C:/spike/shells2.sh 2>&1
     hdr "winpty under docker run -t"
-    docker run -t --rm --user ContainerUser spike-base bash C:/spike/shells2.sh 2>&1 | sed -n '/winpty with a console/,$p'
+    timeout 120 docker run -t --rm --user ContainerUser spike-base bash -c 'timeout 40 winpty bash -c "read -rsn1 -t 5 k; echo winpty-read=[\$k]; [ -t 0 ] && echo stdin-is-tty" < /dev/null; echo rc=$?' 2>&1 | head -20
     ;;
 
 tty)
