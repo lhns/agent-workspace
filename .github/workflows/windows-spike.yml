@@ -18,38 +18,25 @@ jobs:
         shell: pwsh
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
-      - name: info (Q8 pre-cache, Q11)
-        continue-on-error: true
-        run: bash spike/exp.sh info
-      - name: pull (Q8)
+      - name: pull
         continue-on-error: true
         run: bash spike/exp.sh pull
       - name: build base
         run: bash spike/exp.sh build-base
       - name: build harnesses
-        continue-on-error: true
         run: bash spike/exp.sh build-harnesses
-      - name: ident (Q12)
+      - name: round 2 - identity, ACLs, drives
         continue-on-error: true
-        run: bash spike/exp.sh ident
-      - name: mounts (Q1-3)
+        run: bash spike/exp2.sh ident
+      - name: round 2 - stop, traps, signals
         continue-on-error: true
-        run: bash spike/exp.sh mounts
-      - name: volumes (Q3)
+        run: bash spike/exp2.sh stop
+      - name: round 2 - harness shells
         continue-on-error: true
-        run: bash spike/exp.sh volumes
-      - name: hostname (Q4)
+        run: bash spike/exp2.sh shells
+      - name: round 2 - harnesses under a pseudo-console
         continue-on-error: true
-        run: bash spike/exp.sh hostname
-      - name: compose (Q1, Q7, Q10)
+        run: bash spike/exp2.sh tty
+      - name: round 2 - repo tests
         continue-on-error: true
-        run: bash spike/exp.sh compose
-      - name: stop (Q10)
-        continue-on-error: true
-        run: bash spike/exp.sh stop
-      - name: harness (Q5, Q9)
-        continue-on-error: true
-        run: bash spike/exp.sh harness
-      - name: repo tests (Q6)
-        continue-on-error: true
-        run: bash spike/exp.sh tests
+        run: bash spike/exp2.sh tests
