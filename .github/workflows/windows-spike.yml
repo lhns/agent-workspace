@@ -25,18 +25,9 @@ jobs:
         run: bash spike/exp.sh build-base
       - name: build harnesses
         run: bash spike/exp.sh build-harnesses
-      - name: round 2 - identity, ACLs, drives
+      - name: round 3 - shells, sqlite, winpty
         continue-on-error: true
-        run: bash spike/exp2.sh ident
-      - name: round 2 - stop, traps, signals
+        run: bash spike/exp3.sh shells
+      - name: round 3 - harnesses under a pseudo-console
         continue-on-error: true
-        run: bash spike/exp2.sh stop
-      - name: round 2 - harness shells
-        continue-on-error: true
-        run: bash spike/exp2.sh shells
-      - name: round 2 - harnesses under a pseudo-console
-        continue-on-error: true
-        run: bash spike/exp2.sh tty
-      - name: round 2 - repo tests
-        continue-on-error: true
-        run: bash spike/exp2.sh tests
+        run: bash spike/exp3.sh tty
