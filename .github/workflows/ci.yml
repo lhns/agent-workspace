@@ -137,13 +137,13 @@ jobs:
           jq -e -n --argjson b "$base" --argjson h "$harness" '$h[:($b | length)] == $b' > /dev/null ||
             { echo "base layers are not a prefix of the ${{ matrix.harness }} layers"; exit 1; }
 
-      # start.sh is mounted into every image and tested against stub harnesses, so one image is enough.
-      # All harness.sh files are mounted, since the tests cover every harness's session lookup.
+      # agents/ is mounted into every image and start.sh tested against stub harnesses, so one image is enough.
+      # The mount has every harness.sh, since the tests cover every harness's session lookup.
       - name: Start script resumes and asks as designed
         if: matrix.harness == 'claude'
         run: |
           umask 000
-          docker compose run --rm -T -v "$PWD/agents:/opt/agents:ro" claude bash -c "$(cat tests/start.test.sh)" start-test
+          docker compose run --rm -T claude bash -c "$(cat tests/start.test.sh)" start-test
 
       # launch.sh runs from the base image (the compose base service), already built by the launch above;
       # the entrypoint is replaced so the test script runs instead of the launcher.

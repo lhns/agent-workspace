@@ -81,7 +81,7 @@ install.*, uninstall.*         the `agent-workspace` command and Explorer entry 
 compose.yaml                   base service plus one service per harness
 .env.example                   template for .env
 tests/                         CI smoke test (agent starts), launch.sh, start.sh, run.sh, run.bat and install tests
-shared/                        local, gitignored: git config + credentials, AGENTS.md, remote-docker seed key
+shared/                        local, gitignored: git config + credentials, instructions/AGENTS.md, remote-docker seed key
 workspace/                     default workspace
 docs/adr/                      design decisions
 renovate.json                  dependency updates
@@ -92,11 +92,11 @@ renovate.json                  dependency updates
 |---|---|
 | workspace, `.env`, tools | the agent binary (image) |
 | git config and credentials | config, sessions, login (`agents/<harness>/config`, opencode also `data`) |
-| `shared/AGENTS.md` (your global instructions), cache volume | |
+| `shared/instructions/AGENTS.md` (your global instructions), cache volume | |
 
 ## Adding a harness
 
-A folder `agents/<name>/` with a `Dockerfile` (`FROM` the base image) and a `harness.sh` (copy one: `dirs`, `picker`, `find_session`), plus three things that stay per harness: its service in `compose.yaml` (the mount paths differ per harness; mount its `harness.sh` like the others), its entry in the CI matrix, and an entrypoint if it needs one (hermes). The menu, the option checks and the state dirs follow from `harness.sh`.
+A folder `agents/<name>/` with a `Dockerfile` (`FROM` the base image) and a `harness.sh` (copy one: `dirs`, `picker`, `find_session`), plus three things that stay per harness: its service in `compose.yaml` (the mount paths differ per harness; `harness.sh` arrives with the shared `agents/` mount), its entry in the CI matrix, and an entrypoint if it needs one (hermes). The menu, the option checks and the state dirs follow from `harness.sh`.
 
 ## Settings
 
@@ -150,7 +150,7 @@ Host credential helpers can't run in the container. Instead git uses `credential
 
 ## Global instructions
 
-Each harness reads global instructions from its own path. At every start the launcher writes that file: short notes on the environment (`agents/environment.md`, including whether Docker is on), then the contents of `shared/AGENTS.md`. Write your own instructions in `shared/AGENTS.md` (for example a copy of your global `AGENTS.md`); edits to the generated file are overwritten.
+Each harness reads global instructions from its own path. At every start the launcher writes that file: short notes on the environment (`agents/environment.md`, including whether Docker is on), then the contents of `shared/instructions/AGENTS.md`. Write your own instructions there (for example a copy of your global `AGENTS.md`); edits to the generated file are overwritten. An older `shared/AGENTS.md` is moved there by the first launcher run.
 
 | Harness | Generated at (in the container) |
 |---|---|

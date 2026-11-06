@@ -17,8 +17,10 @@
 # AGENTS_HARNESS, AGENTS_NONINTERACTIVE (non-empty = -y), AGENTS_WORKSPACE_TARGET, AGENTS_RUN_ID.
 # Exit 0: done (launch if `result` says so), 130: Ctrl-C in the menu, else an error already printed.
 set -u
-dir=/opt/agents
-shared=${AGENTS_SHARED:-/opt/shared}
+AGENTS_DIR=${AGENTS_DIR:-/opt/agent-workspace}
+dir=$AGENTS_DIR/agents
+home=${AGENTS_HOME:-/home/agent}
+shared=${AGENTS_SHARED:-$AGENTS_DIR/shared}
 # shellcheck source=agents/menu.sh
 . "$dir/menu.sh"
 
@@ -97,7 +99,7 @@ nonint=${nonint:-${AGENTS_NONINTERACTIVE:-}}
 # them per host folder. Paths that would hide the container's own directories fall back to /workspace.
 target=${AGENTS_WORKSPACE_TARGET:?AGENTS_WORKSPACE_TARGET is not set}
 case $target in
-    / | /home | /home/agent | /home/agent/* | /usr | /usr/* | /etc | /etc/* | /bin | /bin/* | /sbin | /sbin/* \
+    / | /home | "$home" | "$home"/* | /usr | /usr/* | /etc | /etc/* | /bin | /bin/* | /sbin | /sbin/* \
         | /lib* | /proc | /proc/* | /sys | /sys/* | /dev | /dev/* | /opt | /opt/* | /var | /var/*)
         echo "Note: $target would hide a container directory; mounting the workspace at /workspace, so conversations are not kept per folder." >&2
         target=/workspace ;;
