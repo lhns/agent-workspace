@@ -1,6 +1,6 @@
 # 12. Non-root `agent` user with uid 1000
 
-Status: Accepted
+Status: Accepted. Windows containers run as `ContainerAdministrator` instead, see [ADR 26](0026-windows-containers.md).
 
 ## Context
 Agents shouldn't run as root. Bind-mounted files must be writable by the container user: on Linux hosts that means a matching uid, usually 1000. In the `node` image, uid 1000 is already taken by the `node` user. On Docker Desktop for Windows, mounted files appear to belong to a different owner, which makes git refuse to work on them ("dubious ownership").

@@ -250,6 +250,17 @@ jobs:
       # The notes are in every turn's system prompt: keep them short (ADR 25).
       - name: environment notes length
         run: test "$(wc -w < agents/environment.md)" -le 120
+      # The Windows Dockerfiles install the same harness versions (Renovate updates both) and the same node major.
+      - name: Windows and Linux Dockerfiles agree
+        run: |
+          for d in agents/*/Dockerfile.windows; do
+            h=$(dirname "$d")
+            [ "$h" = agents/base ] && continue
+            diff <(grep '^ARG .*_VERSION=' "$h/Dockerfile") <(grep '^ARG .*_VERSION=' "$d") || { echo "$h: versions differ between Dockerfile and Dockerfile.windows"; exit 1; }
+          done
+          linux=$(sed -n 's/^FROM node:\([0-9]*\).*/\1/p' agents/base/Dockerfile)
+          windows=$(sed -n 's/^ARG NODE_VERSION=\([0-9]*\)\..*/\1/p' agents/base/Dockerfile.windows)
+          test -n "$linux" && test "$linux" = "$windows" || { echo "node major differs: linux '$linux', windows '$windows'"; exit 1; }
       - uses: docker://rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
       # run.sh (the host side) against a stub docker; no engine needed.
       - name: run.sh tests
@@ -270,3 +281,229 @@ jobs:
       - name: install.bat tests
         shell: powershell
         run: ./tests/install.test.ps1 -Real
+
+  # The Windows images are about 9 GB and the base layer alone takes minutes to pull, so the job runs on
+  # main and, on pull requests, only when something Windows-relevant changed.
+  windows-changes:
+    name: Windows-relevant changes
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.paths.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: paths
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          run=true
+          if [ "$EVENT" = pull_request ]; then
+            git diff --name-only "$BASE" HEAD | grep -qE '^(agents/|compose\.yaml$|run-agent\.|tests/|\.github/workflows/ci\.yml$|renovate\.json$)' || run=false
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+  # Builds the base and the four harness images that exist for Windows through the real launcher
+  # (run-agent.bat), then smoke-tests each, runs start.sh and launch.sh tests inside them and, on main,
+  # publishes the -windows tags and checks the pull path. The classic builder is used (no BuildKit).
+  windows-images:
+    name: Build, test, publish (Windows containers)
+    needs: windows-changes
+    if: needs.windows-changes.outputs.run == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      # The runner's Git Bash would turn an argument like /c/workspace into C:/workspace on its way to run-agent.bat.
+      MSYS2_ARG_CONV_EXCL: "*"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The daemon was once not ready when the job started.
+      - name: Wait for the Docker daemon
+        run: |
+          for _ in $(seq 1 60); do docker version > /dev/null 2>&1 && break; sleep 5; done
+          docker version
+          docker info -f 'OSType={{.OSType}} Isolation={{.Isolation}} OSVersion={{.OSVersion}}'
+          docker compose version
+
+      # Forks publish to and test their own registry. Harmless while AGENTS_LOCAL_BUILD is set.
+      - name: Image prefix and .env
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          echo "AGENTS_IMAGE_PREFIX=ghcr.io/${OWNER,,}/agent-workspace" >> "$GITHUB_ENV"
+          cp .env.example .env
+          echo "# ci" >> .env
+
+      # A published base is never rebuilt: the published harness images depend on its exact layers.
+      - name: Use the published base (main)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+          hash=$(cat agents/base/Dockerfile.windows agents/base/install.ps1 | sha256sum | cut -d' ' -f1)
+          ref="$AGENTS_IMAGE_PREFIX-base:$hash-windows"
+          if docker manifest inspect "$ref" > /dev/null 2>&1; then
+            docker pull "$ref"
+            docker tag "$ref" agent-workspace-base-windows
+            docker rmi "$ref"
+            echo "$hash" > agents/base/.build-windows.sha256
+          fi
+
+      # The first launch builds each image; run.bat is the Windows launcher users run. The workspace is the
+      # checkout, which is on D: here, so this also covers the fallback to C:\workspace. The smoke test runs
+      # inside the container; the TUI itself is started below, since there is no script(1) here.
+      - name: First launch builds each image and the agent's tools work
+        env:
+          AGENTS_LOCAL_BUILD: "1"
+        run: |
+          set -o pipefail
+          for h in claude opencode pi cline; do
+            echo "::group::$h"
+            ./run-agent.bat --workdir . --harness "$h" --exec bash tests/smoke.sh "$h" /c/workspace 2>&1 | tee "first-$h.log"
+            grep -q "^Building $h image" "first-$h.log"
+            echo "::endgroup::"
+          done
+          # Every state dir in a harness's dirs= line must have been created by the launcher.
+          for h in claude opencode pi cline; do
+            sed -n 's/^dirs="\(.*\)"$/\1/p' "agents/$h/harness.sh" | tr ' ' '\n' |
+              while read -r d; do test -d "agents/$h/$d" || exit 1; done
+          done
+          ls agents/*/.build-windows.sha256
+          docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep windows
+
+      # What a user's first sight is: the TUI in a pseudo-console (docker run -t), here without a client, must stay up.
+      - name: The TUI stays up in a pseudo-console
+        run: |
+          fail=0
+          for h in claude opencode pi cline; do
+            docker rm -f "smoke-$h" > /dev/null 2>&1 || true
+            docker run -dt --name "smoke-$h" -e HOME=C:/Users/ContainerAdministrator "agent-workspace-$h-windows" bash -c "$h" > /dev/null
+            sleep 15
+            running=$(docker inspect -f '{{.State.Running}}' "smoke-$h")
+            docker logs "smoke-$h" 2>&1 | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' | tr -d '\r' | head -c 1500 > "tui-$h.txt"
+            echo "== $h: running=$running"; cat "tui-$h.txt"; echo
+            [ "$running" = true ] || { echo "FAIL: $h exited early"; fail=1; }
+            if grep -aEi 'traceback|panic|uncaught|unhandled|segmentation|cannot find module|SyntaxError' "tui-$h.txt"; then echo "FAIL: crash output from $h"; fail=1; fi
+            docker rm -f "smoke-$h" > /dev/null
+          done
+          exit $fail
+
+      # The harness image must be built on the base image: the base's layers are the first ones of the harness's.
+      - name: Harness images share the base layers
+        run: |
+          layers() { docker image inspect --format '{{json .RootFS.Layers}}' "$1"; }
+          prefix() { node -e 'const [b, h] = process.argv.slice(1).map(JSON.parse); process.exit(b.length > 0 && b.every((x, i) => h[i] === x) ? 0 : 1)' "$1" "$2"; }
+          base=$(layers agent-workspace-base-windows)
+          for h in claude opencode pi cline; do
+            prefix "$base" "$(layers "agent-workspace-$h-windows")" || { echo "base layers are not a prefix of the $h layers"; exit 1; }
+          done
+
+      # agents/ is mounted into every image and start.sh tested against stub harnesses, so one image is enough.
+      # The checkout is the workspace, so tests/ is there; the tests make their own HOME and folder.
+      - name: Start script resumes as designed
+        env:
+          AGENTS_LOCAL_BUILD: "1"
+        run: ./run-agent.bat --workdir . --harness claude --exec bash tests/start.test.sh
+      - name: Launch core parses, records and chooses as designed
+        env:
+          AGENTS_LOCAL_BUILD: "1"
+        run: ./run-agent.bat --workdir . --harness claude --exec bash tests/launch.test.sh
+
+      # Where the workspace lands: C: at its own path, anything else at C:\workspace.
+      - name: Workspace paths
+        env:
+          AGENTS_LOCAL_BUILD: "1"
+        run: |
+          set -o pipefail
+          mkdir -p /c/ws-c/proj
+          out=$(./run-agent.bat --workdir 'C:\ws-c\proj' --harness claude --exec bash -c "pwd -W" 2>&1 | tr -d '\r'); echo "$out"
+          echo "$out" | grep -qx 'C:/ws-c/proj'
+          out=$(./run-agent.bat --workdir . --harness claude --exec bash -c "pwd -W" 2>&1 | tr -d '\r'); echo "$out"
+          echo "$out" | grep -qx 'C:/workspace'
+
+      # run-agent.sh under the runner's Git Bash must make the same images, names and hashes as run.bat: nothing is rebuilt.
+      - name: run-agent.sh sees the images run.bat built
+        env:
+          AGENTS_LOCAL_BUILD: "1"
+        run: |
+          set -o pipefail
+          ./run-agent.sh --workdir . --harness claude --exec bash -c 'echo launched' 2>&1 | tee sh.log
+          grep -q '^launched$' sh.log
+          if grep -q '^Building' sh.log; then echo "unexpected rebuild"; exit 1; fi
+
+      # AGENTS_LOCAL_BUILD stays set so a missing pull can't hide a rebuild: the `^Building` check is meaningful.
+      - name: Second launch does not rebuild
+        env:
+          AGENTS_LOCAL_BUILD: "1"
+        run: |
+          set -o pipefail
+          ./run-agent.bat --harness cline --exec bash -c "echo launched" 2>&1 | tee second.log
+          grep -q 'launched' second.log
+          if grep -q '^Building' second.log; then echo "unexpected rebuild"; exit 1; fi
+
+      # Without a terminal, stdin belongs to the harness, not to the launcher core's container.
+      - name: Piped stdin reaches the harness
+        env:
+          AGENTS_LOCAL_BUILD: "1"
+        run: |
+          echo hello | ./run-agent.bat --harness claude --exec cat 2>&1 | tee stdin.log
+          grep -q 'hello' stdin.log
+
+      # Publish only what passed above, and only from main. The tag is the Dockerfile hash plus -windows, so an existing tag is the same image.
+      - name: Publish images to ghcr.io
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+          for name in base claude opencode pi cline; do
+            ref="$AGENTS_IMAGE_PREFIX-$name:$(cat "agents/$name/.build-windows.sha256")-windows"
+            if docker manifest inspect "$ref" > /dev/null 2>&1; then
+              echo "$ref already exists"
+            else
+              docker tag "agent-workspace-$name-windows" "$ref"
+              docker push "$ref"
+            fi
+          done
+
+      # Main only, like the publish. Logged out, so a private package fails here as it would for users.
+      - name: Launch pulls the published images
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker logout ghcr.io
+          set -o pipefail
+          docker rmi agent-workspace-claude-windows agent-workspace-base-windows
+          rm agents/claude/.build-windows.sha256 agents/base/.build-windows.sha256
+          ./run-agent.bat --workdir . --harness claude --exec bash -c "echo launched" 2>&1 | tee pull.log
+          grep -q '^Pulling base image' pull.log
+          grep -q '^Pulling claude image' pull.log
+          grep -q 'launched' pull.log
+          if grep -q '^Building' pull.log; then echo "unexpected rebuild"; exit 1; fi
+
+      # What users download is the compressed layers in the pushed manifests: the base's layer digests must be the
+      # first ones of the harness's. Logged out, so it reads anonymously like a user's pull.
+      - name: Published harness images share the published base's layers
+        if: github.ref == 'refs/heads/main'
+        run: |
+          layers() {
+            docker manifest inspect "$1" | node -e 'let s = ""; process.stdin.on("data", d => s += d).on("end", () => console.log(JSON.stringify(JSON.parse(s).layers.map(l => l.digest))))'
+          }
+          prefix() { node -e 'const [b, h] = process.argv.slice(1).map(JSON.parse); process.exit(b.length > 0 && b.every((x, i) => h[i] === x) ? 0 : 1)' "$1" "$2"; }
+          base=$(layers "$AGENTS_IMAGE_PREFIX-base:$(cat agents/base/.build-windows.sha256)-windows")
+          echo "base:    $base"
+          for h in claude opencode pi cline; do
+            hl=$(layers "$AGENTS_IMAGE_PREFIX-$h:$(cat "agents/$h/.build-windows.sha256")-windows")
+            echo "$h: $hl"
+            prefix "$base" "$hl" || { echo "published base layers are not a prefix of the published $h layers"; exit 1; }
+          done

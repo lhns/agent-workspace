@@ -2,7 +2,7 @@
 
 Run a coding agent in Docker, with only a workspace folder and its own state mounted. One repo, one folder per harness, shared tools and settings.
 
-Harnesses: `claude` (Claude Code), `opencode`, `pi`, `cline`, `hermes`. Docker with Compose is required.
+Harnesses: `claude` (Claude Code), `opencode`, `pi`, `cline`, `hermes`. Docker with Compose is required; Linux and, for all but hermes, Windows containers work (see [Windows containers](#windows-containers)).
 
 ## Run
 
@@ -52,6 +52,20 @@ The first run creates `.env` from `.env.example` and stops until you edit it (un
 
 The first run, and any run after a `git pull` that changed a Dockerfile (or after the image was pruned), pulls the matching prebuilt image from ghcr.io, tagged with a hash of the Dockerfiles (kept in `agents/<harness>/.build.sha256`; delete it to redo this). The base image (`agents/base/.build.sha256`) is pulled the same way on every launch first: harness images are built on it, and it runs the launcher's options and harness menu. If there is none (edited Dockerfile, non-amd64 machine, offline), it builds locally instead.
 
+## Windows containers
+
+With a Docker daemon that runs Windows containers (Docker Engine on Windows without WSL2 or a Linux VM), the launchers use Windows images on their own: they ask `docker info` once, and everything below follows. Linux containers are unchanged. `AGENTS_PLATFORM=linux|windows` (shell or `.env`) overrides the detection.
+
+- **Works:** `claude`, `opencode`, `pi` and `cline`, with the same launcher, options, menus, resume, `--exec`, `--workdir`, cache volume and generated instructions. The agents run their tools in Git Bash, except cline, whose tools run in PowerShell (it has no other choice on Windows). `~/.cache` is the same volume; sessions and config stay under `agents/<harness>/config`.
+- **Not available:** `hermes` (the menu does not list it, naming it is an error) and [Docker inside the agents](#docker-inside-the-agents): `AGENTS_DOCKER` prints one line and the agent starts without it.
+- **Size and time:** the images are about 9 GB (Server Core 5.6 GB, base 6.1 GB, each harness adds a few hundred MB), and the first pull takes minutes. Prebuilt images are `<prefix>-<name>:<hash>-windows` on ghcr.io; locally they are `agent-workspace-<name>-windows`, with `agents/<name>/.build-windows.sha256`, so Linux and Windows images never collide.
+- **Host:** the images are `ltsc2025`, which runs in process isolation only on a Windows Server 2025 / Windows 11 24H2 host or newer. On any other host set `AGENTS_ISOLATION=hyperv` (Hyper-V isolation; slower to start, needs the feature).
+- **User:** the agents run as `ContainerAdministrator` (home `C:\Users\ContainerAdministrator`), not as an unprivileged user: a container user cannot read workspaces under `C:\Users\<you>` because the host's file permissions decide. It is an admin inside the container only.
+- **Workspace:** a folder on `C:` is mounted at its own path (`C:\code\foo` stays `C:\code\foo`), so conversations are kept per folder as on Linux. A folder on another drive is mounted at `C:\workspace` (all conversations of such folders share it), and so is one that would hide a folder of the image (`C:\Windows`, `C:\Program Files`, `C:\git`, ...).
+- **Menus:** the arrow-key menus need a terminal. CI cannot drive one in a Windows container, so they are checked by hand on a real host: `run-agent` with no arguments (harness menu), start in a folder with an earlier conversation (resume menu), and `--exec cmd /c ver`.
+- **Stopping:** `docker stop` ends the container within a second and runs no cleanup traps; nothing needs one here.
+- Plain `docker compose run` needs the variables the launchers set (`AGENTS_IMAGE_SUFFIX`, `AGENTS_DOCKERFILE`, `AGENTS_DIR`, `AGENTS_HOME`, `AGENTS_WORKSPACE_TARGET`); use a launcher. See [ADR 26](docs/adr/0026-windows-containers.md).
+
 ## Use in any folder
 
 The workspace is the folder you start in, not only the one in `.env`. Run `install.bat` (Windows) or `./install.sh` (Linux, macOS) once; it needs no admin rights and no Docker, and writes only per-user files:
@@ -67,12 +81,13 @@ The command holds the path of this repo: after moving it, run the install script
 ## Layout
 
 ```
-agents/base/                   shared image: OS, tools, user (uid 1000 "agent")
-agents/<harness>/              Dockerfile (only the harness install, FROM base), harness.sh + its local state
+agents/base/                   shared image: OS, tools, user (uid 1000 "agent"); Dockerfile.windows + install.ps1 for Windows containers
+agents/<harness>/              Dockerfile (only the harness install, FROM base), Dockerfile.windows (same for Windows containers, if the harness has one), harness.sh + its local state
 agents/<harness>/harness.sh    what the scripts need to know about the harness: state dirs, session lookup, session picker
 agents/launch.sh               options, harness menu and shared/.last-harness; runs in the base image on every launch
 agents/start.sh                resumes or starts the agent (AGENTS_AUTORESUME), in the harness container
 agents/menu.sh                 arrow-key menu, used by launch.sh and start.sh
+agents/os.sh                   Linux or Windows container (the one place that knows), and C:\x <-> /c/x conversion; sourced by launch.sh and start.sh
 agents/docker.sh               Docker for the agent (AGENTS_DOCKER): enrols a key per container and runs the remote-docker session
 agents/hermes/entrypoint.sh    copies hermes state around each run (see Hermes state)
 agents/run.*                   host side of the launcher, one file per OS: .env, workspace path, image pull/build, docker compose
@@ -96,7 +111,7 @@ renovate.json                  dependency updates
 
 ## Adding a harness
 
-A folder `agents/<name>/` with a `Dockerfile` (`FROM` the base image) and a `harness.sh` (copy one: `dirs`, `picker`, `find_session`), plus three things that stay per harness: its service in `compose.yaml` (the mount paths differ per harness; `harness.sh` arrives with the shared `agents/` mount), its entry in the CI matrix, and an entrypoint if it needs one (hermes). The menu, the option checks and the state dirs follow from `harness.sh`.
+A folder `agents/<name>/` with a `Dockerfile` (`FROM` the base image; a `Dockerfile.windows` makes it available in Windows containers) and a `harness.sh` (copy one: `dirs`, `picker`, `find_session`), plus three things that stay per harness: its service in `compose.yaml` (the mount paths differ per harness; `harness.sh` arrives with the shared `agents/` mount), its entry in the CI matrix, and an entrypoint if it needs one (hermes). The menu, the option checks and the state dirs follow from `harness.sh`.
 
 ## Settings
 
@@ -105,8 +120,10 @@ A folder `agents/<name>/` with a `Dockerfile` (`FROM` the base image) and a `har
 - Proxy: set `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (either case; each sets both spellings) in the shell before starting a launcher, or in `.env`. They are used for image builds and passed to the agent. A proxy on the host itself is `host.docker.internal`, not `localhost`. Pulls of the prebuilt images are done by Docker itself and use Docker's proxy settings; if a pull fails, the local build uses these variables.
 - `AGENTS_LOCAL_BUILD`: non-empty (e.g. `1`) always builds the image locally instead of pulling it.
 - `AGENTS_IMAGE_PREFIX`: where prebuilt images are pulled from, default `ghcr.io/lhns/agent-workspace`; set it for a fork or mirror.
+- `AGENTS_PLATFORM`: `linux` or `windows` to force the kind of containers; empty (the default) asks the Docker daemon. See [Windows containers](#windows-containers).
+- `AGENTS_ISOLATION`: `process` or `hyperv` for Windows containers, passed to Docker as `isolation`; empty is the daemon's default. Needed for `hyperv` when the host is not a Windows Server 2025 / 24H2 build. Ignored for Linux containers.
 - `AGENTS_WORKSPACE_CONSISTENCY`: mount consistency options for the workspace, passed to Docker as is (e.g. for remote Docker with caching mounts). Empty means Docker's default.
-- `AGENTS_AUTORESUME`: `ask` (default, also when empty) offers to resume the last conversation for the workspace folder with an arrow-key menu (or to choose another one in the harness's own picker; opencode has none at startup, use `/sessions` there), `yes` resumes without asking, `no` always starts fresh (any case). It only applies when the harness has a conversation for this folder, and `--new` starts fresh. `pick` (the launcher's `--sessions`) opens the harness's session picker instead. The launcher's `--continue`, `--new`, `--sessions` and `--ask` override this setting. The workspace is mounted at its host path (`C:\code\foo` becomes `/c/code/foo`) so conversations are kept per folder; use `/clear`, `/new` or the harness's own picker (`claude --resume`, `pi --resume`, `hermes sessions browse`, `cline history`) for older ones. Conversations stored earlier under `/workspace` don't resume.
+- `AGENTS_AUTORESUME`: `ask` (default, also when empty) offers to resume the last conversation for the workspace folder with an arrow-key menu (or to choose another one in the harness's own picker; opencode has none at startup, use `/sessions` there), `yes` resumes without asking, `no` always starts fresh (any case). It only applies when the harness has a conversation for this folder, and `--new` starts fresh. `pick` (the launcher's `--sessions`) opens the harness's session picker instead. The launcher's `--continue`, `--new`, `--sessions` and `--ask` override this setting. The workspace is mounted at its host path (`C:\code\foo` becomes `/c/code/foo` in Linux containers and stays `C:\code\foo` in Windows ones) so conversations are kept per folder; use `/clear`, `/new` or the harness's own picker (`claude --resume`, `pi --resume`, `hermes sessions browse`, `cline history`) for older ones. Conversations stored earlier under `/workspace` don't resume.
 - `AGENTS_HARNESS`: the harness to run when none is given on the command line (a flag or positional harness wins); with it the menu never shows. Shell beats `.env`, so it can be set system-wide.
 - `AGENTS_DOCKER`, `AGENTS_DOCKER_TOKEN`, `AGENTS_DOCKER_TIMEOUT`: Docker for the agents, see [Docker inside the agents](#docker-inside-the-agents).
 - `AGENTS_NONINTERACTIVE`: any non-empty value is `-y`: no menu is ever shown. Shell beats `.env`.
@@ -179,7 +196,7 @@ Hermes refuses a home folder it can't keep private, so its home (`~/.hermes`) st
 
 ## Development
 
-CI (`.github/workflows/ci.yml`) builds every image through the real launcher and checks that each agent starts; on `main` it then publishes the tested image to ghcr.io (the packages must be set public once) and checks the pull path. CI builds the base image once and the harness images on top of it, so they share its layers (checked against the registry). It also runs shellcheck/actionlint and tests `run.sh` and `run.bat` against a stub docker, the install scripts (on the Windows runner's own user PATH and registry), and `launch.sh` and `start.sh` in containers. Renovate runs from a scheduled workflow and needs a `RENOVATE_TOKEN` repository secret (a personal access token, so its PRs trigger CI); see [ADR 17](docs/adr/0017-pinned-versions-renovate-ci.md) and [ADR 19](docs/adr/0019-prebuilt-images-on-ghcr.md).
+CI (`.github/workflows/ci.yml`) builds every image through the real launcher and checks that each agent starts; on `main` it then publishes the tested image to ghcr.io (the packages must be set public once) and checks the pull path. CI builds the base image once and the harness images on top of it, so they share its layers (checked against the registry). A `windows-images` job does the same for the Windows images on a Windows runner (on `main`, and on pull requests that touch `agents/`, `compose.yaml`, `run-agent.*`, `tests/`, `renovate.json` or the workflow): it builds them through `run-agent.bat`, smoke-tests each (the TUI in a pseudo-console), runs the start and launch tests inside the container, and on `main` publishes the `-windows` tags. It also runs shellcheck/actionlint and tests `run.sh` and `run.bat` against a stub docker, the install scripts (on the Windows runner's own user PATH and registry), and `launch.sh` and `start.sh` in containers. Renovate runs from a scheduled workflow and needs a `RENOVATE_TOKEN` repository secret (a personal access token, so its PRs trigger CI); see [ADR 17](docs/adr/0017-pinned-versions-renovate-ci.md) and [ADR 19](docs/adr/0019-prebuilt-images-on-ghcr.md).
 
 Design decisions: [docs/adr](docs/adr/).
 

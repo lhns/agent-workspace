@@ -3,6 +3,8 @@
 # for the base service, plays the core (agents/launch.sh): it writes the hand-off files from
 # STUB_HARNESS (default claude), STUB_TARGET, or exits with STUB_CORE_CODE / writes nothing for
 # STUB_NO_HARNESS=1 (result "done"), or writes no result for STUB_NO_RESULT=1. The core's own logic is tested by tests/launch.test.sh.
+# `docker info` answers STUB_OSTYPE (default linux) and is not logged; a stub `cygpath` answers
+# STUB_WINPATH (or fails), so Windows containers can be played on any OS.
 # Runs on a temp copy of the repo with a scratch .env, so it leaves no state behind.
 #   bash tests/run-sh.test.sh
 # shellcheck disable=SC2319 # check's second argument is the exit code of the condition just before it
@@ -10,14 +12,16 @@ set -u
 src=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-tar -C "$src" --exclude=.git --exclude=.env --exclude=shared --exclude='.build.sha256' -cf - . | tar -C "$work" -xf -
+tar -C "$src" --exclude=.git --exclude=.env --exclude=shared --exclude='.build*.sha256' -cf - . | tar -C "$work" -xf -
 cd "$work" || exit 1
 { cat .env.example; echo '# edited'; } > .env
 mkdir -p stub
 cat > stub/docker <<'STUB'
 #!/bin/sh
+if [ "${1:-}" = info ]; then echo "${STUB_OSTYPE:-linux}"; exit 0; fi
 echo "$*" >> "$STUB_LOG"
 if [ "${1:-}" = compose ] && [ "${2:-}" = run ]; then
+    echo "$AGENTS_PLATFORM|$AGENTS_IMAGE_SUFFIX|$AGENTS_DOCKERFILE|$AGENTS_DIR|$AGENTS_HOME" >> "$STUB_LOG.env"
     echo "$AGENTS_WORKSPACE_TARGET" >> "$STUB_LOG.target"
     echo "$AGENTS_RUN_ID" >> "$STUB_LOG.id"
     echo "${WORKSPACE_DIR:-}" >> "$STUB_LOG.ws"
@@ -44,9 +48,14 @@ fi
 [ "${STUB_BUILD_FAIL:-}" != 1 ] || [ "${1:-}" != compose ] || [ "${2:-}" != build ] || [ "${3:-}" = base ] || exit 1
 exit 0
 STUB
-chmod +x stub/docker
+cat > stub/cygpath <<'STUB'
+#!/bin/sh
+[ -n "${STUB_WINPATH:-}" ] || exit 1
+echo "$STUB_WINPATH"
+STUB
+chmod +x stub/docker stub/cygpath
 export PATH=$work/stub:$PATH STUB_LOG=$work/docker.log AGENTS_LOCAL_BUILD=1
-unset AGENTS_HARNESS AGENTS_NONINTERACTIVE AGENTS_AUTORESUME WORKSPACE_DIR STUB_HARNESS STUB_TARGET STUB_CORE_CODE STUB_NO_HARNESS STUB_NO_RESULT STUB_BUILD_FAIL STUB_SLEEP
+unset AGENTS_HARNESS AGENTS_NONINTERACTIVE AGENTS_AUTORESUME WORKSPACE_DIR STUB_HARNESS STUB_TARGET STUB_CORE_CODE STUB_NO_HARNESS STUB_NO_RESULT STUB_BUILD_FAIL STUB_SLEEP STUB_OSTYPE STUB_WINPATH AGENTS_PLATFORM
 
 fail=0
 # run <args...>: sets `out` (stdout+stderr), `code` and `calls` (the docker calls, "|"-separated).
@@ -150,6 +159,47 @@ run --workdir
 check "--workdir without a value stops before docker" "$([ "$code" = 1 ] && [ -z "$calls" ] && case $out in *"needs a folder"*) true ;; *) false ;; esac; echo $?)"
 run claude --workdir "$work/my proj"
 check "--workdir not first is left to the core" "$([ "$(log base)" = "[claude][--workdir][$work/my proj]" ]; echo $?)"
+
+# Windows containers: the daemon's OSType (or AGENTS_PLATFORM) picks the -windows names, hash files, tags and paths.
+sha() { cat "$@" | sha256sum | cut -d' ' -f1; }
+env_of() { tail -n1 "$STUB_LOG.env" 2>/dev/null; }
+winenv='windows|-windows|Dockerfile.windows|C:/agent-workspace|C:/Users/ContainerAdministrator'
+base_files=(agents/base/Dockerfile.windows agents/base/install.ps1)
+rm -f agents/*/.build*.sha256
+run claude
+check "linux: no platform variables for compose" "$([ "$(env_of)" = 'linux||||' ]; echo $?)"
+rm -f agents/*/.build*.sha256
+STUB_OSTYPE=windows STUB_WINPATH='C:\Users\me\proj' run claude
+check "windows: base and harness are built under their -windows names" "$(is 'compose build base|compose run --rm -T base claude|image inspect agent-workspace-base-windows|compose build claude|compose run --rm -T claude'; echo $?)"
+check "windows: compose gets the Windows variables" "$([ "$(env_of)" = "$winenv" ]; echo $?)"
+check "windows: the hash files are .build-windows.sha256, over the Windows files" "$([ "$(cat agents/base/.build-windows.sha256)" = "$(sha "${base_files[@]}")" ] && [ "$(cat agents/claude/.build-windows.sha256)" = "$(sha "${base_files[@]}" agents/claude/Dockerfile.windows)" ] && [ ! -e agents/base/.build.sha256 ]; echo $?)"
+check "windows: a C: workspace is mounted at its own path" "$([ "$(head -n1 "$STUB_LOG.target")" = 'C:\Users\me\proj' ]; echo $?)"
+STUB_OSTYPE=windows STUB_WINPATH='D:\work\proj' run claude
+check "windows: another drive falls back to C:\\workspace" "$([ "$(head -n1 "$STUB_LOG.target")" = 'C:\workspace' ]; echo $?)"
+STUB_OSTYPE=windows run claude
+check "windows: no path from cygpath falls back to C:\\workspace" "$([ "$(head -n1 "$STUB_LOG.target")" = 'C:\workspace' ]; echo $?)"
+STUB_OSTYPE=windows STUB_WINPATH='c:\lower' run claude
+check "windows: a lower-case drive letter counts as C:" "$([ "$(head -n1 "$STUB_LOG.target")" = 'c:\lower' ]; echo $?)"
+STUB_OSTYPE=windows STUB_WINPATH='C:\x' run claude
+check "windows: a second launch builds nothing" "$(is 'image inspect agent-workspace-base-windows|compose run --rm -T base claude|image inspect agent-workspace-claude-windows|compose run --rm -T claude'; echo $?)"
+# The tag is the hash plus -windows.
+rm -f agents/*/.build*.sha256
+bh=$(sha "${base_files[@]}")
+ch=$(sha "${base_files[@]}" agents/claude/Dockerfile.windows)
+p=ghcr.io/lhns/agent-workspace
+STUB_OSTYPE=windows STUB_WINPATH='C:\x' AGENTS_LOCAL_BUILD='' run claude
+check "windows: prebuilt images are pulled as <prefix>-<name>:<hash>-windows" "$(is "pull $p-base:$bh-windows|tag $p-base:$bh-windows agent-workspace-base-windows|rmi $p-base:$bh-windows|compose run --rm -T base claude|pull $p-claude:$ch-windows|tag $p-claude:$ch-windows agent-workspace-claude-windows|rmi $p-claude:$ch-windows|compose run --rm -T claude"; echo $?)"
+STUB_WINPATH='C:\x' AGENTS_PLATFORM=windows run claude
+check "AGENTS_PLATFORM=windows beats a Linux daemon" "$([ "$(env_of)" = "$winenv" ]; echo $?)"
+STUB_OSTYPE=windows AGENTS_PLATFORM=linux run claude
+check "AGENTS_PLATFORM=linux beats a Windows daemon" "$([ "$(env_of)" = 'linux||||' ]; echo $?)"
+echo 'AGENTS_PLATFORM=windows' >> .env
+STUB_WINPATH='C:\x' run claude
+check "AGENTS_PLATFORM in .env is used" "$([ "$(env_of)" = "$winenv" ]; echo $?)"
+AGENTS_PLATFORM=linux run claude
+check "a shell AGENTS_PLATFORM beats .env" "$([ "$(env_of)" = 'linux||||' ]; echo $?)"
+grep -v '^AGENTS_PLATFORM=' .env > .env.tmp; mv .env.tmp .env
+rm -f agents/*/.build*.sha256
 
 mv .env .env.edited
 run --help
