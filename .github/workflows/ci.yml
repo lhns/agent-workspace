@@ -309,7 +309,7 @@ jobs:
   # publishes the -windows tags and checks the pull path. The classic builder is used (no BuildKit).
   windows-images:
     name: Build, test, publish (Windows containers)
-    needs: [lint, windows-changes]
+    needs: windows-changes
     if: needs.windows-changes.outputs.run == 'true'
     runs-on: windows-2025
     timeout-minutes: 120

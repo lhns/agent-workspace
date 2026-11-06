@@ -294,7 +294,7 @@ check "docker: the token is not printed, metacharacters or not" "$(cat "$dstubs"
 nolock=$(
     . "$AGENTS_DIR/agents/docker.sh"
     docker_seed=$(mktemp -d)
-    # shellcheck disable=SC2329 # called by docker_locked
+    # shellcheck disable=SC2317,SC2329 # called by docker_locked (SC2317 on older shellcheck)
     command() { if [ "$*" = "-v flock" ]; then return 1; fi; builtin command "$@"; }
     # shellcheck disable=SC2016 # the child shell expands it
     docker_locked bash -c 'test -d "$1/.lock.d" || exit 3; touch "$1/ran"' x "$docker_seed"
