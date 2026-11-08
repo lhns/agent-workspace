@@ -2,9 +2,18 @@
 # Tests agents/launch.sh in the base container (see .github/workflows/ci.yml):
 #   docker compose run --rm -T --entrypoint bash base -c "$(cat tests/launch.test.sh)" launch-test
 # The state and the launch dir are scratch ones; the result is read back from the files it writes,
-# as the host launchers do.
+# as the host launchers do. It runs in a Windows container too: there the workspace paths are
+# Windows ones, and the menu tests, which need script(1), are skipped. The Windows rules are also
+# played on Linux with AGENTS_PLATFORM=windows.
 set -u
 core=${AGENTS_DIR:-/opt/agent-workspace}/agents/launch.sh
+# shellcheck source=agents/os.sh
+. "$(dirname "$core")/os.sh"
+# Workspace paths the tests use.
+A=/a B=/b C=/c NEW=/new
+if is_windows; then A='C:\a' B='C:\b' C='C:\c' NEW='C:\new'; fi
+# The menu tests drive a terminal through script(1), which a Windows container lacks.
+have_script=; ! command -v script >/dev/null || have_script=1
 export AGENTS_SHARED=/tmp/aw-launch-shared AGENTS_RUN_ID=t1
 state=$AGENTS_SHARED/.last-harness
 launch=$AGENTS_SHARED/.launch/$AGENTS_RUN_ID
@@ -30,7 +39,7 @@ argv() { local a; while IFS= read -r -d '' a; do printf '>%s\n' "$a"; done <"$la
 # Without a terminal: sets `out`, `code`.
 run() {
     fresh
-    out=$(AGENTS_WORKSPACE_TARGET=${WS:-/a} bash "$core" "$@" </dev/null 2>&1); code=$?
+    out=$(AGENTS_WORKSPACE_TARGET=${WS:-$A} bash "$core" "$@" </dev/null 2>&1); code=$?
     settle
 }
 # What the host launcher does once the harness image is ready: moves the new state into place.
@@ -41,7 +50,7 @@ pty() {
     shift 2
     fresh
     # shellcheck disable=SC2059 # keys are printf escapes
-    out=$({ sleep 1; printf "$keys"; sleep 1; printf "$key2"; sleep 1; } | AGENTS_WORKSPACE_TARGET=${WS:-/a} timeout 20 script -qec "bash $core $*" /dev/null 2>&1)
+    out=$({ sleep 1; printf "$keys"; sleep 1; printf "$key2"; sleep 1; } | AGENTS_WORKSPACE_TARGET=${WS:-$A} timeout 20 script -qec "bash $core $*" /dev/null 2>&1)
     code=$?
     settle
 }
@@ -56,7 +65,7 @@ check "harness: exit code" "$code" 0
 check "harness: no arguments" "$(argv)" ""
 check "harness: no resume mode, so AGENTS_AUTORESUME applies" "$(exists mode)" no
 check "harness: not an exec" "$(exists exec)" no
-check "harness: the target" "$(field target)" /a
+check "harness: the target" "$(field target)" "$A"
 check "harness: result marker" "$(field result)" launch
 run --continue claude --model x /tmp/y
 check "--continue, args after the harness: mode" "$(field mode)" yes
@@ -92,16 +101,19 @@ run claude --workdir /d;               check "--workdir after the harness is a h
 run claude -- --workdir /d;            check "--workdir after -- is a harness argument" "$(argv)" $'>--workdir\n>/d'
 run --workdir /d --workdir /e claude;  has "a second --workdir" "$out" "--workdir must come first"
 
-# A launch dir that can't be written is an error, not "nothing to launch".
-fresh; chmod 555 "$launch"
-out=$(AGENTS_WORKSPACE_TARGET=/a bash "$core" claude </dev/null 2>&1); code=$?
-chmod 755 "$launch"
-check "unwritable launch dir: exit code" "$code" 1
-has "unwritable launch dir: message" "$out" "Cannot write to"
-check "unwritable launch dir: no result marker" "$(exists result)" no
+# A launch dir that can't be written is an error, not "nothing to launch" (permissions mean
+# nothing to the admin account of a Windows container, so only there it is skipped).
+if ! is_windows; then
+    fresh; chmod 555 "$launch"
+    out=$(AGENTS_WORKSPACE_TARGET=$A bash "$core" claude </dev/null 2>&1); code=$?
+    chmod 755 "$launch"
+    check "unwritable launch dir: exit code" "$code" 1
+    has "unwritable launch dir: message" "$out" "Cannot write to"
+    check "unwritable launch dir: no result marker" "$(exists result)" no
+fi
 fresh
 printf '/zz\tpi\n' >"$state"
-out=$(AGENTS_WORKSPACE_TARGET=/a bash "$core" claude </dev/null 2>&1)
+out=$(AGENTS_WORKSPACE_TARGET=$A bash "$core" claude </dev/null 2>&1)
 check "the state file itself is left alone" "$(cat "$state")" "$(printf '/zz\tpi')"
 check "the new state is only in the launch dir until the host moves it" "$(exists last-harness)" yes
 
@@ -118,60 +130,122 @@ run claude;                            check "not non-interactive by default" "$
 AGENTS_NONINTERACTIVE=1 run claude;    check "AGENTS_NONINTERACTIVE: marked" "$(exists noninteractive)" yes
 AGENTS_HARNESS=pi run --continue;      check "AGENTS_HARNESS picks the harness, no menu" "$(field harness)-$(field mode)" pi-yes
 AGENTS_HARNESS=pi run claude;          check "a positional harness beats AGENTS_HARNESS" "$(field harness)" claude
-AGENTS_HARNESS=pi run --harness hermes; check "--harness beats AGENTS_HARNESS" "$(field harness)" hermes
+AGENTS_HARNESS=pi run --harness opencode; check "--harness beats AGENTS_HARNESS" "$(field harness)" opencode
 AGENTS_HARNESS=nope run;               has "AGENTS_HARNESS with an unknown name" "$out" "Unknown harness 'nope'"; check "AGENTS_HARNESS unknown: nothing handed off" "$(exists harness)" no
 AGENTS_HARNESS=pi run -- --model x;    check "AGENTS_HARNESS with --: args go to it" "$(field harness)$(argv)" $'pi>--model\n>x'
 
 # --sessions.
 run --sessions claude;                 has "--sessions without a terminal" "$out" "--sessions needs a terminal"; check "--sessions without a terminal: exit code" "$code" 1
 run -y --sessions claude;              has "--sessions with -y" "$out" "can't be combined with -y"
-pty "" "" --sessions opencode;         has "--sessions for opencode" "$out" "opencode has no session picker"; check "--sessions for opencode: nothing handed off" "$(exists harness)" no
-pty "" "" --sessions claude;           check "--sessions with a terminal: mode" "$(field mode)-$(field harness)" pick-claude
+if [ -n "$have_script" ]; then
+    pty "" "" --sessions opencode;     has "--sessions for opencode" "$out" "opencode has no session picker"; check "--sessions for opencode: nothing handed off" "$(exists harness)" no
+    pty "" "" --sessions claude;       check "--sessions with a terminal: mode" "$(field mode)-$(field harness)" pick-claude
+else
+    echo "skipped: --sessions with a terminal (no script(1))"
+fi
 
 # The guard list: a workspace that would hide a container directory falls back to /workspace.
-WS=/home/agent/proj run claude
-check "guard: hidden directory falls back" "$(field target)" /workspace
-has "guard: says so" "$out" "would hide a container directory"
-check "guard: the fallback is what is recorded" "$(recorded /workspace)" claude
-WS=/home/agent run claude;             check "guard: the home directory" "$(field target)" /workspace
-WS=/c/Users/me/proj run claude;        check "guard: a mirrored Windows path stays" "$(field target)" /c/Users/me/proj
-WS=/opt run claude;                    check "guard: /opt" "$(field target)" /workspace
-WS=/workspace run claude;              check "guard: /workspace stays" "$(field target)" /workspace
-WS=/a run claude;                      has "guard: no note for a normal path" "$out" "would hide" no
+if ! is_windows; then
+    WS=/home/agent/proj run claude
+    check "guard: hidden directory falls back" "$(field target)" /workspace
+    has "guard: says so" "$out" "would hide a container directory"
+    check "guard: the fallback is what is recorded" "$(recorded /workspace)" claude
+    WS=/home/agent run claude;         check "guard: the home directory" "$(field target)" /workspace
+    WS=/c/Users/me/proj run claude;    check "guard: a mirrored Windows path stays" "$(field target)" /c/Users/me/proj
+    WS=/opt run claude;                check "guard: /opt" "$(field target)" /workspace
+    WS=/workspace run claude;          check "guard: /workspace stays" "$(field target)" /workspace
+    WS=$A run claude;                  has "guard: no note for a normal path" "$out" "would hide" no
+fi
+
+# Windows containers: the target stays a Windows path (also when the container's environment turned
+# it into /c/...), guarded case-insensitively; only C: can be mounted at its own path. Played on
+# every OS through AGENTS_PLATFORM.
+win() { AGENTS_PLATFORM=windows run "$@"; }
+win_target() { # path, expected target, expected: kept | fallback
+    WS=$1 win claude
+    check "windows guard: $1" "$(field target)" "$2"
+    if [ "$3" = fallback ]; then has "windows guard: $1 says so" "$out" "mounting the workspace at C:\\workspace"
+    else has "windows guard: $1 has no note" "$out" "would hide" no; fi
+}
+win_target 'C:\Users\me\proj' 'C:\Users\me\proj' kept
+win_target 'c:\Users\me\proj' 'C:\Users\me\proj' kept
+win_target '/c/Users/me/proj' 'C:\Users\me\proj' kept
+win_target 'C:/Users/me/proj' 'C:\Users\me\proj' kept
+win_target 'C:\code\my proj (x86)' 'C:\code\my proj (x86)' kept
+win_target 'C:\github\proj' 'C:\github\proj' kept
+win_target 'C:\Windowsy' 'C:\Windowsy' kept
+win_target 'C:\Users\me' 'C:\Users\me' kept
+win_target 'D:\proj' 'C:\workspace' fallback
+win_target "C:\\" 'C:\workspace' fallback
+win_target 'C:\Windows' 'C:\workspace' fallback
+win_target 'c:\windows\system32' 'C:\workspace' fallback
+win_target 'C:\Program Files (x86)\a' 'C:\workspace' fallback
+win_target 'C:\ProgramData' 'C:\workspace' fallback
+win_target 'C:\git\usr' 'C:\workspace' fallback
+win_target 'C:\Users' 'C:\workspace' fallback
+win_target 'C:\Users\ContainerAdministrator' 'C:\workspace' fallback
+win_target 'C:\Users\ContainerAdministrator\proj' 'C:\workspace' fallback
+win_target 'C:\npm-global\lib' 'C:\workspace' fallback
+win_target 'C:\node' 'C:\workspace' fallback
+win_target 'C:\python' 'C:\workspace' fallback
+win_target 'C:\tools' 'C:\workspace' fallback
+if is_windows; then
+    win_target "$(win_path "$(posix_path "$AGENTS_DIR")")/x" 'C:\workspace' fallback
+    win_target "$(win_path "$(posix_path "${AGENTS_HOME:-/c/Users/ContainerAdministrator}")")\\proj" 'C:\workspace' fallback
+fi
+WS=/workspace win claude;              check "windows: the plain-compose default becomes C:\\workspace" "$(field target)" 'C:\workspace'
+check "windows: the fallback is what is recorded" "$(recorded 'C:\workspace')" claude
+
+# Harnesses without a Dockerfile.windows are refused on Windows, by name; elsewhere they are fine.
+win hermes;                            has "windows: hermes is refused" "$out" "'hermes' is not available in Windows containers (available: claude cline opencode pi)"
+check "windows: hermes is refused: exit code, nothing handed off" "$code-$(exists harness)" 1-no
+win --harness hermes;                  has "windows: --harness hermes is refused" "$out" "not available in Windows containers"
+AGENTS_HARNESS=hermes win;             has "windows: AGENTS_HARNESS=hermes is refused" "$out" "not available in Windows containers"
+win nope;                              has "windows: an unknown name is still unknown" "$out" "Unknown harness 'nope'"
+win opencode;                          check "windows: an available harness launches" "$(field harness)" opencode
+printf '%s\thermes\n*\thermes\n' "$A" >"$state"
+win;                                   has "windows: a recorded hermes is not offered (no terminal)" "$out" "No terminal and no harness recorded; pass one: claude cline opencode pi"
+if ! is_windows; then run hermes;      check "linux: hermes launches" "$(field harness)" hermes; fi
 
 # shared/.last-harness: per folder and overall, written by named launches too.
 rm -f "$state"
-WS=/a run claude;                      check "named launch: recorded for the folder" "$(recorded /a)" claude
+WS=$A run claude;                      check "named launch: recorded for the folder" "$(recorded "$A")" claude
 check "named launch: recorded for anywhere" "$(recorded '*')" claude
-WS=/b run pi
-check "named launch: another folder keeps the first" "$(recorded /a)/$(recorded /b)/$(recorded '*')" claude/pi/pi
+WS=$B run pi
+check "named launch: another folder keeps the first" "$(recorded "$A")/$(recorded "$B")/$(recorded '*')" claude/pi/pi
 check "named launch: one line per key" "$(grep -c . "$state")" 3
 # Without a terminal and without a harness: the last used one.
-WS=/a run;                             check "no harness, no terminal: this folder's last used" "$(field harness)" claude
-WS=/b run;                             check "no harness, no terminal: another folder's own" "$(field harness)" pi
-WS=/c run;                             check "no harness, no terminal: a new folder gets the last used anywhere" "$(field harness)" pi
-check "that choice is recorded for the new folder" "$(recorded /c)" pi
-WS=/a run -y;                          check "-y without a harness: the last used" "$(field harness)" claude
+WS=$A run;                             check "no harness, no terminal: this folder's last used" "$(field harness)" claude
+WS=$B run;                             check "no harness, no terminal: another folder's own" "$(field harness)" pi
+WS=$C run;                             check "no harness, no terminal: a new folder gets the last used anywhere" "$(field harness)" pi
+check "that choice is recorded for the new folder" "$(recorded "$C")" pi
+WS=$A run -y;                          check "-y without a harness: the last used" "$(field harness)" claude
 rm -f "$state"
-WS=/a run;                             has "no history, no terminal: error" "$out" "No terminal and no harness recorded"; check "no history: exit code" "$code" 1
+WS=$A run;                             has "no history, no terminal: error" "$out" "No terminal and no harness recorded"; check "no history: exit code" "$code" 1
 check "no history: nothing recorded" "$([ -e "$state" ] && echo yes || echo no)" no
-printf '/a\tgone\n*\tnope\n' >"$state"
-WS=/a run;                             check "a recorded harness that no longer exists is an error" "$code" 1
+printf '%s\tgone\n*\tnope\n' "$A" >"$state"
+WS=$A run;                             check "a recorded harness that no longer exists is an error" "$code" 1
+
+# The menus need a terminal; in a Windows container there is no script(1), so they are a manual check (README).
+if [ -z "$have_script" ]; then
+    echo "skipped: menu tests (no script(1))"
+    exit $fail
+fi
 
 # AGENTS_NONINTERACTIVE counts as no terminal, even with one.
-printf '/a\tpi\n*\tpi\n' >"$state"
+printf '%s\tpi\n*\tpi\n' "$A" >"$state"
 AGENTS_NONINTERACTIVE=1 pty "$DOWN$ENTER" ""
 check "non-interactive with a terminal: takes the recorded harness" "$(field harness)" pi
 has "non-interactive with a terminal: no menu" "$out" "Up/Down to move" no
 
 # Menu: the last used one is first and marked; the rest follow alphabetically.
-printf '/a\tpi\n*\tpi\n' >"$state"
+printf '%s\tpi\n*\tpi\n' "$A" >"$state"
 pty "$ENTER" ""
 check "menu: Enter picks the last used" "$(field harness)" pi
 check "menu: Enter exits 0" "$code" 0
-check "menu: the choice is recorded" "$(recorded /a)" pi
+check "menu: the choice is recorded" "$(recorded "$A")" pi
 has "menu: shows (last used)" "$out" "pi (last used)"
-has "menu: title" "$out" "Select the agent harness to run in /a"
+has "menu: title" "$out" "Select the agent harness to run in $A"
 has "menu: key hint" "$out" "Up/Down to move"
 has "menu: clears the screen first" "$out" "$(printf '\033[H\033[2J')"
 case ${out%%claude*} in *"pi (last used)"*) echo "ok   menu: last used is listed before claude" ;; *) echo "FAIL menu: order in: $out" >&2; fail=1 ;; esac
@@ -179,14 +253,19 @@ case $out in *claude*cline*hermes*opencode*) echo "ok   menu: the rest in alphab
 pty "$DOWN$ENTER" "";                  check "menu: Down+Enter picks the next one, claude" "$(field harness)" claude
 check "menu: the choice is remembered for anywhere" "$(recorded '*')" claude
 printf '*\tpi\n' >"$state"
-WS=/new pty "$ENTER" "";               check "menu: a new folder starts on the last used anywhere" "$(field harness)" pi
+WS=$NEW pty "$ENTER" "";               check "menu: a new folder starts on the last used anywhere" "$(field harness)" pi
 rm -f "$state"
 pty "$ENTER" "";                       check "menu: no history, Enter picks the first one" "$(field harness)" claude
 pty "$DOWN$ENTER" "" --continue -- --model x
 check "menu: with options, args after -- go to the chosen harness" "$(field mode)-$(field harness)$(argv)" $'yes-cline>--model\n>x'
 
-printf '/a\tpi\n*\tpi\n' >"$state"
+printf '%s\tpi\n*\tpi\n' "$A" >"$state"
 pty "$DOWN" '\003';                    check "menu: Ctrl-C exits 130" "$code" 130
 check "menu: Ctrl-C hands nothing off" "$(exists harness)" no
-check "menu: Ctrl-C records nothing" "$(recorded /a)" pi
+check "menu: Ctrl-C records nothing" "$(recorded "$A")" pi
+
+# The menu of a Windows container lists only the available harnesses.
+printf '%s\tpi\n*\tpi\n' "$A" >"$state"
+AGENTS_PLATFORM=windows pty "$ENTER" ""
+case $out in *hermes*) echo "FAIL windows menu: lists hermes: $out" >&2; fail=1 ;; *claude*cline*opencode*) echo "ok   windows menu: no hermes" ;; *) echo "FAIL windows menu: $out" >&2; fail=1 ;; esac
 exit $fail

@@ -13,6 +13,9 @@ set -u
 AGENTS_DIR=${AGENTS_DIR:-/opt/agent-workspace}
 h=${1:?usage: start.sh <harness>}
 
+# is_windows, native_cwd: Windows containers run this under Git Bash (agents/os.sh).
+# shellcheck source=agents/os.sh
+. "$AGENTS_DIR/agents/os.sh"
 # docker_up / docker_down: Docker for the agent when AGENTS_DOCKER is set (agents/docker.sh).
 # shellcheck source=agents/docker.sh
 . "$AGENTS_DIR/agents/docker.sh"
@@ -28,6 +31,12 @@ write_instructions() {
     tmp=$(mktemp "$dir/.instructions.XXXXXX") || return 0
     {
         cat "$AGENTS_DIR/agents/environment.md"
+        if is_windows; then
+            echo '- Windows container (Server Core), shell Git Bash; cline runs tools in PowerShell.'
+        else
+            # shellcheck disable=SC2016 # the backticks are markdown
+            echo '- Linux container, user `agent`: no root, sudo or apt.'
+        fi
         if [ -n "$docker_active" ]; then
             echo "- Docker: on. It is the user's daemon: you see their containers; remove only ones you started. Bind mounts work for the workspace and \`/tmp\` only; published ports are on localhost."
         else
@@ -49,6 +58,8 @@ launch_cmd() {
     trap 'docker_down; exit 143' TERM HUP INT
     docker_up
     trap - TERM HUP INT
+    # Made here, not in the image: a Windows volume can only be mounted on an empty directory.
+    mkdir -p "$HOME/.cache/bin" 2>/dev/null || true
     write_instructions
     [ -n "$docker_active" ] || exec "$@"
     "$@" <&0 &
@@ -81,11 +92,16 @@ fi
 # Rows of a SQLite query, columns tab-separated; fails on a missing db, no rows or any error.
 # shellcheck disable=SC2317,SC2329 # (SC2317 on older shellcheck) called from the harness.sh files, which shellcheck cannot follow from here
 sql() {
-    [ -f "$1" ] || return 1
-    "${PYTHON:-python3}" - "$@" <<'PY' 2>/dev/null
-import sqlite3, sys
+    local db=$1
+    shift
+    [ -f "$db" ] || return 1
+    # Python is a Windows program there: it needs the path in Windows form. The other arguments
+    # (the query, the folder) are passed literally; the folder is already in Windows form.
+    ! command -v cygpath >/dev/null || db=$(cygpath -m "$db")
+    "${PYTHON:-python3}" - "$db" "$@" <<'PY' 2>/dev/null
+import pathlib, sqlite3, sys
 db, query, *args = sys.argv[1:]
-rows = sqlite3.connect("file:" + db + "?mode=ro", uri=True).execute(query, args).fetchall()
+rows = sqlite3.connect(pathlib.Path(db).absolute().as_uri() + "?mode=ro", uri=True).execute(query, args).fetchall()
 if not rows:
     sys.exit(1)
 for row in rows:

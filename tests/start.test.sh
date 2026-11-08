@@ -3,9 +3,14 @@
 #   docker compose run --rm -T claude bash -c "$(cat tests/start.test.sh)" start-test
 # The harness binaries are stubs that print their arguments; HOME is a scratch directory. The mounted
 # agents/ gives every harness's harness.sh, not only the container's own.
+# It runs in a Windows container too (Git Bash): the folder is C:\aw-start-test there, which the
+# harnesses key their sessions by in their own way; the tests that drive a terminal through
+# script(1) are skipped (a manual check, README), and so is Docker for the agents.
 set -u
 AGENTS_DIR=${AGENTS_DIR:-/opt/agent-workspace}
 start=$AGENTS_DIR/agents/start.sh
+# shellcheck source=agents/os.sh
+. "$AGENTS_DIR/agents/os.sh"
 fail=0
 check() { # name, command output, expected substring, "no" to expect its absence
     if [ "${4:-}" = no ]; then
@@ -13,16 +18,26 @@ check() { # name, command output, expected substring, "no" to expect its absence
     elif grep -qF -- "$3" <<<"$2"; then echo "ok   $1"
     else echo "FAIL $1: expected '$3' in: $2" >&2; fail=1; fi
 }
+# check, for the tests that need a terminal.
+tcheck() {
+    if command -v script >/dev/null; then check "$@"; else echo "skipped: $1 (no script(1))"; fi
+}
 
 HOME=$(mktemp -d); export HOME
-unset CLAUDE_CONFIG_DIR XDG_DATA_HOME HERMES_HOME
+# The launcher's own run (--exec) sets some of these: the tests make their own.
+unset CLAUDE_CONFIG_DIR XDG_DATA_HOME HERMES_HOME AGENTS_RUN_ID AGENTS_LAUNCH_DIR AGENTS_AUTORESUME AGENTS_NONINTERACTIVE AGENTS_DOCKER AGENTS_DOCKER_TOKEN
 stubs=$(mktemp -d)
 for b in claude pi opencode cline hermes; do
     printf '#!/bin/sh\necho "STUB %s $*"\n' "$b" > "$stubs/$b"
     chmod +x "$stubs/$b"
 done
 export PATH=$stubs:$PATH
-work=/tmp/aw-start-test
+# The folder, as the harnesses see it ($nwork), and the session folders they derive from it.
+if is_windows; then
+    work=/c/aw-start-test nwork='C:\aw-start-test' ckey=C--aw-start-test pikey=--C--aw-start-test--
+else
+    work=/tmp/aw-start-test nwork=/tmp/aw-start-test ckey=-tmp-aw-start-test pikey=--tmp-aw-start-test--
+fi
 mkdir -p "$work"
 cd "$work" || exit 1
 
@@ -38,9 +53,9 @@ pty() { # keys, harness, keys sent a second later
 UP='\033[A' DOWN='\033[B' ENTER='\n'
 
 out=$(plain claude ask);  check "claude: no session starts fresh" "$out" "STUB claude" ; check "claude: no session, no --continue" "$out" "--continue" no
-mkdir -p "$HOME/.claude/projects/-tmp-aw-start-test"
+mkdir -p "$HOME/.claude/projects/$ckey"
 out=$(plain claude ask);  check "claude: no .jsonl yet, still fresh" "$out" "--continue" no
-touch "$HOME/.claude/projects/-tmp-aw-start-test/x.jsonl"
+touch "$HOME/.claude/projects/$ckey/x.jsonl"
 out=$(plain claude "");   check "claude: session, empty setting, no terminal resumes" "$out" "STUB claude --continue"
 out=$(plain claude ask);  check "claude: session, ask, no terminal resumes" "$out" "STUB claude --continue"
 out=$(plain claude YES);  check "claude: yes (upper case) resumes" "$out" "STUB claude --continue"
@@ -62,40 +77,40 @@ out=$(withargs claude yes --model x);    check "args: after the resume arguments
 out=$(withargs claude ask --model x);    check "args: ask without a terminal resumes, then the args" "$out" "STUB claude --continue --model x"
 out=$(withargs claude no --model x "a b");  check "args: new conversation, args only" "$out" "STUB claude --model x a b" ; check "args: new conversation, no --continue" "$out" "--continue" no
 out=$(AGENTS_AUTORESUME=ask AGENTS_NONINTERACTIVE=1 timeout 10 script -qec "AGENTS_LAUNCH_DIR=$modelx bash $start claude" /dev/null 2>&1)
-check "non-interactive with a terminal resumes without a menu" "$out" "STUB claude --continue --model x" ; check "non-interactive: no menu" "$out" "Start new conversation" no
+tcheck "non-interactive with a terminal resumes without a menu" "$out" "STUB claude --continue --model x" ; tcheck "non-interactive: no menu" "$out" "Start new conversation" no
 out=$(AGENTS_AUTORESUME=pick timeout 10 script -qec "AGENTS_LAUNCH_DIR=$modelx bash $start claude" /dev/null 2>&1)
-check "pick: the harness's own session picker, then the args" "$out" "STUB claude --resume --model x"
+tcheck "pick: the harness's own session picker, then the args" "$out" "STUB claude --resume --model x"
 out=$(AGENTS_AUTORESUME=pick timeout 10 script -qec "bash $start hermes" /dev/null 2>&1)
-check "pick: hermes" "$out" "STUB hermes sessions browse"
+tcheck "pick: hermes" "$out" "STUB hermes sessions browse"
 out=$(withargs claude pick)
 check "pick without a terminal is an error" "$out" "--sessions needs a terminal" ; check "pick without a terminal starts nothing" "$out" "STUB" no
 out=$(AGENTS_NONINTERACTIVE=1 AGENTS_AUTORESUME=pick timeout 10 script -qec "bash $start claude" /dev/null 2>&1)
-check "pick with non-interactive is an error" "$out" "can't be combined with -y"
+tcheck "pick with non-interactive is an error" "$out" "can't be combined with -y"
 out=$(AGENTS_AUTORESUME=pick timeout 10 script -qec "bash $start opencode" /dev/null 2>&1)
-check "pick for opencode is an error" "$out" "no session picker" ; check "pick for opencode starts nothing" "$out" "STUB" no
+tcheck "pick for opencode is an error" "$out" "no session picker" ; tcheck "pick for opencode starts nothing" "$out" "STUB" no
 
-out=$(pty "$ENTER" claude);              check "menu: Enter resumes" "$out" "STUB claude --continue"
-out=$(pty "$DOWN$ENTER" claude);         check "menu: Down+Enter opens the picker" "$out" "STUB claude --resume"
-out=$(pty "$DOWN$DOWN$ENTER" claude);    check "menu: Down+Down+Enter starts fresh" "$out" "STUB claude" ; check "menu: Down+Down+Enter, no --continue/--resume" "$out" "--" no
-out=$(pty "$DOWN$DOWN$DOWN$ENTER" claude); check "menu: Down past the end stays on new" "$out" "STUB claude" ; check "menu: Down past the end, no --continue/--resume" "$out" "--" no
-out=$(pty "$DOWN$UP$ENTER" claude);      check "menu: Down+Up+Enter resumes" "$out" "STUB claude --continue"
-out=$(pty "$UP$ENTER" claude);           check "menu: Up past the start stays on resume" "$out" "STUB claude --continue"
-out=$(pty "y$ENTER" claude);             check "menu: y is no shortcut, Enter resumes" "$out" "STUB claude --continue"
-check "menu: shows the picker item" "$out" "Choose another conversation"
-check "menu: shows the new item" "$out" "Start new conversation"
-check "menu: title" "$out" "claude has an earlier conversation in /tmp/aw-start-test" ; check "menu: key hint" "$out" "Up/Down to move"
-check "menu: clears the screen first" "$out" "$(printf '[H[2J')"
-out=$(pty '\033' claude "$DOWN$DOWN$ENTER"); check "menu: a lone Esc does not hang or select; Down+Down+Enter then starts fresh" "$out" "--continue" no
-out=$(pty "$DOWN" claude '\003');         check "menu: Ctrl-C starts nothing" "$out" "STUB" no ; check "menu: Ctrl-C shows the cursor again" "$out" "$(printf '\033[?25h')"
+out=$(pty "$ENTER" claude);              tcheck "menu: Enter resumes" "$out" "STUB claude --continue"
+out=$(pty "$DOWN$ENTER" claude);         tcheck "menu: Down+Enter opens the picker" "$out" "STUB claude --resume"
+out=$(pty "$DOWN$DOWN$ENTER" claude);    tcheck "menu: Down+Down+Enter starts fresh" "$out" "STUB claude" ; tcheck "menu: Down+Down+Enter, no --continue/--resume" "$out" "--" no
+out=$(pty "$DOWN$DOWN$DOWN$ENTER" claude); tcheck "menu: Down past the end stays on new" "$out" "STUB claude" ; tcheck "menu: Down past the end, no --continue/--resume" "$out" "--" no
+out=$(pty "$DOWN$UP$ENTER" claude);      tcheck "menu: Down+Up+Enter resumes" "$out" "STUB claude --continue"
+out=$(pty "$UP$ENTER" claude);           tcheck "menu: Up past the start stays on resume" "$out" "STUB claude --continue"
+out=$(pty "y$ENTER" claude);             tcheck "menu: y is no shortcut, Enter resumes" "$out" "STUB claude --continue"
+tcheck "menu: shows the picker item" "$out" "Choose another conversation"
+tcheck "menu: shows the new item" "$out" "Start new conversation"
+tcheck "menu: title" "$out" "claude has an earlier conversation in $work" ; tcheck "menu: key hint" "$out" "Up/Down to move"
+tcheck "menu: clears the screen first" "$out" "$(printf '[H[2J')"
+out=$(pty '\033' claude "$DOWN$DOWN$ENTER"); tcheck "menu: a lone Esc does not hang or select; Down+Down+Enter then starts fresh" "$out" "--continue" no
+out=$(pty "$DOWN" claude '\003');         tcheck "menu: Ctrl-C starts nothing" "$out" "STUB" no ; tcheck "menu: Ctrl-C shows the cursor again" "$out" "$(printf '\033[?25h')"
 out=$(AGENTS_AUTORESUME=yes timeout 10 script -qec "bash $start claude" /dev/null </dev/null 2>&1)
-check "yes: no menu" "$out" "Start new conversation" no
+tcheck "yes: no menu" "$out" "Start new conversation" no
 
 # pi: sessions live in a folder named after the working directory.
-out=$(pty "" pi);                        check "pi: no session starts without a menu" "$out" "Resume last" no ; check "pi: no session starts fresh" "$out" "STUB pi"
-mkdir -p "$HOME/.pi/agent/sessions/--tmp-aw-start-test--"
-touch "$HOME/.pi/agent/sessions/--tmp-aw-start-test--/s.jsonl"
+out=$(pty "" pi);                        tcheck "pi: no session starts without a menu" "$out" "Resume last" no ; tcheck "pi: no session starts fresh" "$out" "STUB pi"
+mkdir -p "$HOME/.pi/agent/sessions/$pikey"
+touch "$HOME/.pi/agent/sessions/$pikey/s.jsonl"
 out=$(plain pi ask);                     check "pi: session resumes" "$out" "STUB pi --continue"
-out=$(pty "$DOWN$ENTER" pi);             check "pi: picker" "$out" "STUB pi --resume"
+out=$(pty "$DOWN$ENTER" pi);             tcheck "pi: picker" "$out" "STUB pi --resume"
 
 # opencode, cline, hermes: SQLite indexes.
 db() { python3 - "$@" <<'PY'
@@ -111,31 +126,51 @@ PY
 }
 oc=$HOME/.local/share/opencode/opencode.db
 db "$oc" "CREATE TABLE session (id TEXT, directory TEXT, parent_id TEXT, time_archived INTEGER)" \
-    "INSERT INTO session VALUES ('a', '/elsewhere', NULL, NULL)" "INSERT INTO session VALUES ('b', '$work', NULL, 1)" "INSERT INTO session VALUES ('c', '$work', 'a', NULL)"
+    "INSERT INTO session VALUES ('a', '/elsewhere', NULL, NULL)" "INSERT INTO session VALUES ('b', '$nwork', NULL, 1)" "INSERT INTO session VALUES ('c', '$nwork', 'a', NULL)"
 out=$(plain opencode ask);               check "opencode: only other folder, archived or child sessions: fresh" "$out" "--continue" no
-db "$oc" "INSERT INTO session VALUES ('d', '$work', NULL, NULL)"
+db "$oc" "INSERT INTO session VALUES ('d', '$nwork', NULL, NULL)"
 out=$(plain opencode ask);               check "opencode: session resumes" "$out" "STUB opencode --continue"
-out=$(pty "$DOWN$ENTER" opencode);       check "opencode: no picker item" "$out" "Choose another" no ; check "opencode: Down+Enter starts fresh" "$out" "--continue" no
+out=$(pty "$DOWN$ENTER" opencode);       tcheck "opencode: no picker item" "$out" "Choose another" no ; tcheck "opencode: Down+Enter starts fresh" "$out" "--continue" no
 
 cl=$HOME/.cline/data/db/sessions.db
 msgs=$HOME/cline-messages
 mkdir -p "$msgs"
+# The harness records the path in its own form (C:... on Windows).
+msgw=$msgs; ! is_windows || msgw=$(cygpath -w "$msgs")
 echo '[{}]' > "$msgs/old.json"; echo '[{}]' > "$msgs/other.json"; echo '[{}]' > "$msgs/sub.json"; : > "$msgs/empty.json"
-db "$cl" "CREATE TABLE sessions (session_id TEXT, cwd TEXT, is_subagent INTEGER, parent_session_id TEXT, started_at TEXT, messages_path TEXT)"     "INSERT INTO sessions VALUES ('other', '/elsewhere', 0, NULL, '2030-01-01', '$msgs/other.json')"
+db "$cl" "CREATE TABLE sessions (session_id TEXT, cwd TEXT, is_subagent INTEGER, parent_session_id TEXT, started_at TEXT, messages_path TEXT)"     "INSERT INTO sessions VALUES ('other', '/elsewhere', 0, NULL, '2030-01-01', '$msgw/other.json')"
 out=$(plain cline ask);                  check "cline: only other folder: fresh" "$out" "--id" no
-db "$cl" "INSERT INTO sessions VALUES ('empty', '$work', 0, NULL, '2019-01-01', '$msgs/empty.json')"     "INSERT INTO sessions VALUES ('nopath', '$work', 0, NULL, '2019-06-01', NULL)"     "INSERT INTO sessions VALUES ('missing', '$work', 0, NULL, '2019-07-01', '$msgs/gone.json')"
+db "$cl" "INSERT INTO sessions VALUES ('empty', '$nwork', 0, NULL, '2019-01-01', '$msgw/empty.json')"     "INSERT INTO sessions VALUES ('nopath', '$nwork', 0, NULL, '2019-06-01', NULL)"     "INSERT INTO sessions VALUES ('missing', '$nwork', 0, NULL, '2019-07-01', '$msgw/gone.json')"
 out=$(plain cline ask);                  check "cline: sessions without messages: fresh" "$out" "--id" no
-db "$cl" "INSERT INTO sessions VALUES ('old', '$work', 0, NULL, '2020-01-01', '$msgs/old.json')"     "INSERT INTO sessions VALUES ('stub', '$work', 0, NULL, '2021-01-01', '$msgs/empty.json')"     "INSERT INTO sessions VALUES ('sub', '$work', 1, NULL, '2022-01-01', '$msgs/sub.json')"
+db "$cl" "INSERT INTO sessions VALUES ('old', '$nwork', 0, NULL, '2020-01-01', '$msgw/old.json')"     "INSERT INTO sessions VALUES ('stub', '$nwork', 0, NULL, '2021-01-01', '$msgw/empty.json')"     "INSERT INTO sessions VALUES ('sub', '$nwork', 1, NULL, '2022-01-01', '$msgw/sub.json')"
 out=$(plain cline ask);                  check "cline: resumes the newest session of this folder that has messages" "$out" "STUB cline --id old"
-out=$(pty "$DOWN$ENTER" cline);          check "cline: picker" "$out" "STUB cline history"
+out=$(pty "$DOWN$ENTER" cline);          tcheck "cline: picker" "$out" "STUB cline history"
 
+if ! is_windows; then # hermes has no Windows image
 hm=$HOME/.hermes/state.db
 db "$hm" "CREATE TABLE sessions (source TEXT, message_count INTEGER, git_repo_root TEXT, cwd TEXT)" \
     "INSERT INTO sessions VALUES ('cli', 3, NULL, '/elsewhere')" "INSERT INTO sessions VALUES ('cli', 0, NULL, '$work')" "INSERT INTO sessions VALUES ('cron', 3, NULL, '$work')"
 out=$(plain hermes ask);                 check "hermes: other folder, empty or non-cli sessions: fresh" "$out" "-c" no
 db "$hm" "INSERT INTO sessions VALUES ('cli', 3, NULL, '$work')"
 out=$(plain hermes ask);                 check "hermes: session resumes" "$out" "STUB hermes -c"
-out=$(pty "$DOWN$ENTER" hermes);         check "hermes: picker" "$out" "STUB hermes sessions browse"
+out=$(pty "$DOWN$ENTER" hermes);         tcheck "hermes: picker" "$out" "STUB hermes sessions browse"
+fi
+
+# The database may sit in a folder with a space (a file URI must quote it); sql() hands Python the
+# path in its own form.
+spacey="$HOME/data dir"
+out=$(XDG_DATA_HOME=$spacey plain opencode ask); check "sql: no database in a folder with a space: fresh" "$out" "--continue" no
+mkdir -p "$spacey/opencode"
+cp "$oc" "$spacey/opencode/opencode.db"
+out=$(XDG_DATA_HOME=$spacey plain opencode ask); check "sql: a database in a folder with a space is read" "$out" "STUB opencode --continue"
+
+# Windows: the harnesses key sessions by the Windows folder (C:\x), not the MSYS one (/c/x).
+if is_windows; then
+    mkdir -p "$HOME/.claude/projects/C--" "$HOME/.pi/agent/sessions/--C----"
+    touch "$HOME/.claude/projects/C--/x.jsonl" "$HOME/.pi/agent/sessions/--C----/s.jsonl"
+    out=$(cd /c && plain claude ask);    check "windows: claude's key for C:\\ is C--" "$out" "STUB claude --continue"
+    out=$(cd /c && plain pi ask);        check "windows: pi's key for C:\\ is --C----" "$out" "STUB pi --continue"
+fi
 
 # The launch dir that agents/launch.sh writes: args (NUL-separated), mode, noninteractive, exec.
 ld=$(mktemp -d)
@@ -162,11 +197,19 @@ rm "$ld/mode"
 out=$(launched claude yes);              check "launch dir: no mode file, AGENTS_AUTORESUME applies" "$out" "STUB claude --continue"
 : >"$ld/noninteractive"
 out=$(AGENTS_LAUNCH_DIR=$ld AGENTS_AUTORESUME=ask timeout 10 script -qec "bash $start claude" /dev/null 2>&1)
-check "launch dir: noninteractive resumes without a menu" "$out" "STUB claude --continue" ; check "launch dir: noninteractive, no menu" "$out" "Start new conversation" no
+tcheck "launch dir: noninteractive resumes without a menu" "$out" "STUB claude --continue" ; tcheck "launch dir: noninteractive, no menu" "$out" "Start new conversation" no
 out=$(AGENTS_RUN_ID=nope AGENTS_AUTORESUME=yes bash "$start" claude </dev/null 2>&1)
 check "a run id without a launch dir is ignored" "$out" "STUB claude --continue"
 
 # Docker for the agent (agents/docker.sh): a stub remote-docker logs its calls; the claude stub shows DOCKER_HOST.
+if is_windows; then
+    # Not available there: one line, and the agent starts without it.
+    out=$(AGENTS_AUTORESUME=no AGENTS_DOCKER=remote-docker AGENTS_DOCKER_TOKEN=rdt1.x.y bash "$start" claude </dev/null 2>&1)
+    check "docker: Windows containers say it is not available" "$out" "Docker for the agents is not available in Windows containers"
+    check "docker: said once" "$(grep -c 'not available in Windows' <<<"$out")" "1"
+    check "docker: the harness still starts" "$out" "STUB claude"
+    check "docker: the token is not printed" "$out" "rdt1." no
+else
 dstubs=$(mktemp -d)
 cat >"$dstubs/claude" <<'STUB'
 #!/bin/sh
@@ -248,6 +291,18 @@ check "docker: concurrent starts spend the seed token once" "$(grep -c '\[state=
 check "docker: concurrent starts both get Docker" "$(cat "$dstubs"/race1 "$dstubs"/race2 | grep -c 'DH=unix://')" "2"
 check "docker: the token is not printed, metacharacters or not" "$(cat "$dstubs"/race1 "$dstubs"/race2)" "rdt1.a" no
 
+# Without flock (Git Bash has none) the seed lock is a directory.
+nolock=$(
+    . "$AGENTS_DIR/agents/docker.sh"
+    docker_seed=$(mktemp -d)
+    # shellcheck disable=SC2317,SC2329 # called by docker_locked (SC2317 on older shellcheck)
+    command() { if [ "$*" = "-v flock" ]; then return 1; fi; builtin command "$@"; }
+    # shellcheck disable=SC2016 # the child shell expands it
+    docker_locked bash -c 'test -d "$1/.lock.d" || exit 3; touch "$1/ran"' x "$docker_seed"
+    echo "rc=$? ran=$([ -e "$docker_seed/ran" ] && echo yes) lock=$([ -e "$docker_seed/.lock.d" ] && echo left || echo gone)"
+)
+check "docker: without flock the lock is a directory, taken and released" "$nolock" "rc=0 ran=yes lock=gone"
+
 ld2=$(mktemp -d)
 # shellcheck disable=SC2016 # the child shell expands it
 printf '%s\0' sh -c 'echo "EXEC DH=$DOCKER_HOST"; exit 7' >"$ld2/args"
@@ -256,6 +311,7 @@ out=$(dock AGENTS_DOCKER=remote-docker AGENTS_LAUNCH_DIR="$ld2"); code=$?
 check "docker: --exec gets DOCKER_HOST too" "$out" "EXEC DH=unix:///tmp/remote-docker."
 check "docker: --exec keeps the command's exit status" "$code" "7"
 check "docker: --exec ends the session and removes the key" "$(calls)" "remote key rm SHA256:mine -f"
+fi
 
 # Generated global instructions (ADR 25): environment notes, the Docker line, then the user's file.
 user=$(mktemp -d)/user.md
@@ -268,6 +324,13 @@ check "notes: the harness still starts" "$out" "STUB claude"
 rm -f "$notes"
 out=$(AGENTS_USER_INSTRUCTIONS=$user plain claude no)
 check "notes: written at the harness path" "$(cat "$notes")" "# Environment"
+if is_windows; then
+    check "notes: the OS line says Windows" "$(cat "$notes")" "- Windows container (Server Core), shell Git Bash; cline runs tools in PowerShell."
+    check "notes: no Linux line on Windows" "$(cat "$notes")" "- Linux container" no
+else
+    check "notes: the OS line says Linux" "$(cat "$notes")" "- Linux container, user \`agent\`: no root, sudo or apt."
+    check "notes: no Windows line on Linux" "$(cat "$notes")" "- Windows container" no
+fi
 check "notes: the Docker line says none without Docker" "$(cat "$notes")" "- Docker: none."
 check "notes: the Docker 'on' line is absent without Docker" "$(cat "$notes")" "- Docker: on." no
 check "notes: the user's file is appended" "$(cat "$notes")" "MY RULES"
@@ -282,10 +345,12 @@ rm -f "$notes"
 AGENTS_USER_INSTRUCTIONS=$user plain claude no >/dev/null
 check "notes: an empty user file adds nothing" "$(tail -n 1 "$notes")" "- Docker: none."
 
+if ! is_windows; then # Docker for the agents is off there
 rm -f "$notes"
 out=$(dock AGENTS_DOCKER=remote-docker AGENTS_DOCKER_TOKEN="$TOKEN" AGENTS_USER_INSTRUCTIONS="$user.orig")
 check "notes: Docker on is written when a session runs" "$(cat "$notes")" "- Docker: on."
 check "notes: Docker none is absent when a session runs" "$(cat "$notes")" "- Docker: none." no
+fi
 
 # Every harness with an instructions path gets the file there; hermes has none and writes nothing.
 for hh in opencode:.config/opencode/AGENTS.md pi:.pi/agent/AGENTS.md cline:.agents/AGENTS.md; do

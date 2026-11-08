@@ -13,10 +13,11 @@ find_session() {
     local rows id sid path
     rows=$(sql "$HOME/.cline/data/db/sessions.db" \
         "SELECT session_id, messages_path FROM sessions WHERE cwd = ? AND is_subagent = 0 AND parent_session_id IS NULL AND COALESCE(messages_path, '') != '' ORDER BY started_at DESC" \
-        "$PWD") || return 1
+        "$(native_cwd)") || return 1
     id=
     while IFS=$'\t' read -r sid path; do
-        if [ -s "$path" ]; then id=$sid; break; fi
+        # messages_path is in the harness's own form: C:\... on Windows.
+        if [ -s "$(posix_path "$path")" ]; then id=$sid; break; fi
     done <<<"$rows"
     [ -n "$id" ] || return 1
     resume=(cline --id "$id")

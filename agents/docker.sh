@@ -43,8 +43,31 @@ docker_enrol_seed() {
     docker_say "enrolled; you can remove AGENTS_DOCKER_TOKEN from .env."
 }
 
+# Runs "$@" with the seed dir locked: flock where there is one, else a lock directory (Git Bash
+# has no flock). A lock left by a killed start is taken over after a minute.
+docker_locked() {
+    local lock=$docker_seed/.lock.d waited=0 rc
+    if command -v flock >/dev/null; then
+        ( flock 9 && "$@" ) 9>"$docker_seed/.lock"
+        return
+    fi
+    until mkdir "$lock" 2>/dev/null; do
+        [ "$waited" -lt 60 ] || { rm -rf "$lock"; waited=0; continue; }
+        sleep 1
+        waited=$((waited + 1))
+    done
+    "$@"
+    rc=$?
+    rmdir "$lock"
+    return "$rc"
+}
+
 docker_up() {
     [ "${AGENTS_DOCKER:-}" = remote-docker ] || return 0
+    if is_windows; then
+        docker_say "Docker for the agents is not available in Windows containers."
+        return 0
+    fi
     docker_seed=${AGENTS_DOCKER_SEED:-${AGENTS_HOME:-/home/agent}/.remote-docker/seed}
     local token note out
     token=$(docker_token "${AGENTS_DOCKER_TOKEN:-}")
@@ -62,7 +85,7 @@ docker_up() {
         docker_cleanup_dir
         return 0
     fi
-    if ! { { command -v flock >/dev/null && flock 9; }; docker_enrol_seed "$token"; } 9>"$docker_seed/.lock"; then
+    if ! docker_locked docker_enrol_seed "$token"; then
         docker_cleanup_dir
         return 0
     fi

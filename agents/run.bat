@@ -26,18 +26,39 @@ for /f "delims==" %%K in ('findstr /r /b "[A-Z_]*=" .env.example') do (
 rem Settings: a non-empty shell variable wins over .env, like compose's own interpolation.
 rem Prebuilt images come from ghcr.io unless AGENTS_LOCAL_BUILD is non-empty; they are <prefix>-<harness>:<hash>,
 rem the base image <prefix>-base:<hash>.
-for %%V in (WORKSPACE_DIR AGENTS_LOCAL_BUILD AGENTS_IMAGE_PREFIX) do if not defined %%V for /f "usebackq tokens=1,* delims==" %%A in (".env") do if "%%A"=="%%V" if not "%%B"=="" set "%%V=%%~B"
+for %%V in (WORKSPACE_DIR AGENTS_LOCAL_BUILD AGENTS_IMAGE_PREFIX AGENTS_PLATFORM) do if not defined %%V for /f "usebackq tokens=1,* delims==" %%A in (".env") do if "%%A"=="%%V" if not "%%B"=="" set "%%V=%%~B"
 if not defined AGENTS_IMAGE_PREFIX set "AGENTS_IMAGE_PREFIX=ghcr.io/lhns/agent-workspace"
+
+rem Linux or Windows containers: whatever the daemon runs, unless AGENTS_PLATFORM says otherwise.
+rem Windows containers use their own images, names and paths (ADR 26); the Linux ones stay as they were.
+if not defined AGENTS_PLATFORM for /f "usebackq delims=" %%P in (`docker info -f "{{.OSType}}" 2^>nul`) do set "AGENTS_PLATFORM=%%P"
+if /i "%AGENTS_PLATFORM%"=="windows" (set "AGENTS_PLATFORM=windows") else (set "AGENTS_PLATFORM=linux")
+rem The files that make up the images: the Dockerfiles, and on Windows the base's install script.
+set "IMG_SUFFIX="
+set "DF_EXT="
+set "BASE_DF=agents\base\Dockerfile"
+set "BASE_DF2="
+if "%AGENTS_PLATFORM%"=="windows" (
+    set "IMG_SUFFIX=-windows"
+    set "DF_EXT=.windows"
+    set "BASE_DF=agents\base\Dockerfile.windows"
+    set "BASE_DF2=agents\base\install.ps1"
+    set "AGENTS_IMAGE_SUFFIX=-windows"
+    set "AGENTS_DOCKERFILE=Dockerfile.windows"
+    set "AGENTS_DIR=C:/agent-workspace"
+    set "AGENTS_HOME=C:/Users/ContainerAdministrator"
+)
 if not defined WORKSPACE_DIR if not exist workspace mkdir workspace
 if defined WORKSPACE_DIR if not exist "%WORKSPACE_DIR%\" >&2 echo WORKSPACE_DIR '%WORKSPACE_DIR%' does not exist& exit /b 1
 
-rem The workspace is mounted at its host path (C:\code\foo becomes /c/code/foo), so harnesses that key
-rem sessions by directory keep them per host folder. A path with no drive letter falls back to /workspace.
-rem The container side guards it further (launch.sh), and the result is read back below.
+rem The workspace is mounted at its host path (C:\code\foo becomes /c/code/foo; C:\code\foo itself for
+rem Windows containers, where only C: works and any other drive goes to C:\workspace), so harnesses that key
+rem sessions by directory keep them per host folder. A path with no drive letter falls back to /workspace
+rem (C:\workspace). The container side guards it further (launch.sh), and the result is read back below.
 set "WS=workspace"
 if defined WORKSPACE_DIR set "WS=%WORKSPACE_DIR%"
 for %%I in ("%WS%") do set "WS_ABS=%%~fI"
-for /f "usebackq delims=" %%T in (`powershell -NoProfile -Command "$p = $env:WS_ABS.Replace('\', '/'); if ($p.Length -ge 2 -and $p[1] -eq ':') { '/' + $p.Substring(0, 1).ToLower() + $p.Substring(2).TrimEnd('/') } else { '/workspace' }"`) do set "AGENTS_WORKSPACE_TARGET=%%T"
+for /f "usebackq delims=" %%T in (`powershell -NoProfile -Command "if ($env:AGENTS_PLATFORM -eq 'windows') { if ($env:WS_ABS -match '^[cC]:\\') { 'C:' + $env:WS_ABS.Substring(2).TrimEnd('\') } else { 'C:\workspace' } } else { $p = $env:WS_ABS.Replace('\', '/'); if ($p.Length -ge 2 -and $p[1] -eq ':') { '/' + $p.Substring(0, 1).ToLower() + $p.Substring(2).TrimEnd('/') } else { '/workspace' } }"`) do set "AGENTS_WORKSPACE_TARGET=%%T"
 
 rem State dirs, so docker doesn't create them as root. The launch dir is made here (not in the
 rem container) so this script can delete it afterwards.
@@ -57,7 +78,7 @@ call :seedgit
 
 rem The core (options, harness menu, last-harness) runs in the base image, ensured first, with
 rem every argument untouched.
-call :ensure base "agents\base\Dockerfile" || goto :fail
+call :ensure base "%BASE_DF%" "%BASE_DF2%" || goto :fail
 rem Without a terminal the core must not swallow stdin meant for the harness.
 if defined TTYFLAG goto :corenostdin
 docker compose run --rm base %*
@@ -75,7 +96,7 @@ set /p HARNESS=<shared\.launch\%AGENTS_RUN_ID%\harness
 rem The workspace path after the core's guard list.
 set /p AGENTS_WORKSPACE_TARGET=<shared\.launch\%AGENTS_RUN_ID%\target
 call :mkdirs
-call :ensure %HARNESS% "agents\base\Dockerfile" "agents\%HARNESS%\Dockerfile" || goto :fail
+call :ensure %HARNESS% "%BASE_DF%" "%BASE_DF2%" "agents\%HARNESS%\Dockerfile%DF_EXT%" || goto :fail
 
 rem Recorded only now, so a failed pull or build isn't (the core only computed the content).
 move /y shared\.launch\%AGENTS_RUN_ID%\last-harness shared\.last-harness >nul
@@ -122,7 +143,7 @@ if defined SRC (
 )
 exit /b 0
 
-rem :ensure NAME DOCKERFILE [DOCKERFILE]  (NAME is base or a harness)
+rem :ensure NAME FILE FILE FILE  (NAME is base or a harness; the files make up the image, empty ones are skipped)
 rem Update an image only when its Dockerfiles changed since the last time (much faster than
 rem asking docker). The hash is also the ghcr tag, so a pull gets exactly this checkout's
 rem image; an edited Dockerfile misses the registry and builds locally. Docker's layer cache
@@ -132,16 +153,17 @@ setlocal enabledelayedexpansion
 set "E_NAME=%~1"
 set "F1=%~2"
 set "F2=%~3"
-set "HASHFILE=agents\%E_NAME%\.build.sha256"
-for /f "usebackq delims=" %%H in (`powershell -NoProfile -Command "$b = [IO.File]::ReadAllBytes($env:F1); if ($env:F2) { $b += [IO.File]::ReadAllBytes($env:F2) }; [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($b)).Replace('-', '').ToLower()"`) do set "NEW_HASH=%%H"
+set "F3=%~4"
+set "HASHFILE=agents\%E_NAME%\.build%IMG_SUFFIX%.sha256"
+for /f "usebackq delims=" %%H in (`powershell -NoProfile -Command "$b = [byte[]]@(); foreach ($f in $env:F1, $env:F2, $env:F3) { if ($f) { $b += [IO.File]::ReadAllBytes($f) } }; [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($b)).Replace('-', '').ToLower()"`) do set "NEW_HASH=%%H"
 set "OLD_HASH="
 if exist "%HASHFILE%" set /p OLD_HASH=<"%HASHFILE%"
 set "CHANGED="
 if not "%NEW_HASH%"=="%OLD_HASH%" set "CHANGED=1"
 rem A matching hash with the image gone (pruned) counts as changed.
-if not defined CHANGED docker image inspect agent-workspace-%E_NAME% >nul 2>&1 || set "CHANGED=1"
+if not defined CHANGED docker image inspect agent-workspace-%E_NAME%%IMG_SUFFIX% >nul 2>&1 || set "CHANGED=1"
 if not defined CHANGED exit /b 0
-set "REF=%AGENTS_IMAGE_PREFIX%-%E_NAME%:%NEW_HASH%"
+set "REF=%AGENTS_IMAGE_PREFIX%-%E_NAME%:%NEW_HASH%%IMG_SUFFIX%"
 set "PULLED="
 if not defined AGENTS_LOCAL_BUILD (
     echo Pulling %E_NAME% image...
@@ -149,7 +171,7 @@ if not defined AGENTS_LOCAL_BUILD (
     if errorlevel 1 (
         echo No prebuilt %E_NAME% image available, building locally.
     ) else (
-        docker tag "!REF!" agent-workspace-%E_NAME% || exit /b 1
+        docker tag "!REF!" agent-workspace-%E_NAME%%IMG_SUFFIX% || exit /b 1
         docker rmi "!REF!" >nul
         set "PULLED=1"
     )
@@ -160,7 +182,7 @@ if not defined PULLED (
         docker compose build base || exit /b 1
     ) else (
         rem Build on the published or already local base so the layers are shared.
-        call :ensure base "agents\base\Dockerfile" || exit /b 1
+        call :ensure base "%BASE_DF%" "%BASE_DF2%" || exit /b 1
         docker compose build %E_NAME% || exit /b 1
     )
 )

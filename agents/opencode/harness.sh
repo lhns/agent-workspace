@@ -12,6 +12,6 @@ instructions="$HOME/.config/opencode/AGENTS.md"
 find_session() {
     sql "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db" \
         "SELECT 1 FROM session WHERE directory = ? AND parent_id IS NULL AND time_archived IS NULL" \
-        "$PWD" >/dev/null || return 1
+        "$(native_cwd)" >/dev/null || return 1
     resume=(opencode --continue)
 }

@@ -1,0 +1,8 @@
+# escape=`
+FROM agent-workspace-base-windows
+# renovate: datasource=npm depName=cline
+ARG CLINE_VERSION=3.0.74
+# The cache goes outside ~/.cache (a volume target stays empty) and is dropped again.
+RUN npm install -g --cache C:\npm-cache cline@%CLINE_VERSION% && rmdir /s /q C:\npm-cache
+# The image pins the version (Renovate); an in-container update is lost on exit.
+ENV CLINE_NO_AUTO_UPDATE=1

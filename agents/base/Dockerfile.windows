@@ -1,0 +1,61 @@
+# escape=`
+# Windows counterpart of Dockerfile (ADR 26): the same tools and layout on Server Core, for a
+# Windows-only Docker daemon. The scripts run under Git Bash, so every command is bash.exe.
+# ltsc2025 needs a Windows Server 2025 / 24H2 host in process isolation (AGENTS_ISOLATION=hyperv else).
+# CI publishes this image once and builds the harness images on that published image, so they share its layers.
+FROM mcr.microsoft.com/windows/servercore:ltsc2025
+
+LABEL org.opencontainers.image.source=https://github.com/lhns/agent-workspace `
+      org.opencontainers.image.licenses=Apache-2.0
+
+# Tool versions; agents/base/install.ps1 downloads them and checks the checksums. Keep node on the
+# same major as the Linux image. The hashes of PortableGit and Python are pinned here: update them
+# with the version (sha256 of the file install.ps1 names; python.org publishes none).
+# renovate: datasource=node-version depName=node
+ARG NODE_VERSION=24.22.2
+# renovate: datasource=github-releases depName=git-for-windows/git versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)\.windows\.(?<build>\d+)$
+ARG GIT_VERSION=v2.56.0.windows.4
+ARG GIT_SHA256=b1f3e52216e2ed6882d1bebfd4d3fdf319bec40d2edbbf9fd26ec4fd3fce7ed1
+# renovate: datasource=python-version depName=python
+ARG PYTHON_VERSION=3.14.10
+ARG PYTHON_SHA256=90905e64a840557d8c1bc4f5b74db3d7ee85e3ffb217611cac1c7813acea4159
+# renovate: datasource=github-releases depName=BurntSushi/ripgrep
+ARG RIPGREP_VERSION=15.2.0
+# renovate: datasource=github-releases depName=jqlang/jq extractVersion=^jq-(?<version>.+)$
+ARG JQ_VERSION=1.8.2
+
+COPY install.ps1 C:/install.ps1
+RUN powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\install.ps1 `
+        -Node %NODE_VERSION% -GitTag %GIT_VERSION% -GitSha256 %GIT_SHA256% `
+        -Python %PYTHON_VERSION% -PythonSha256 %PYTHON_SHA256% -Ripgrep %RIPGREP_VERSION% -Jq %JQ_VERSION% `
+    && del C:\install.ps1
+
+# Always the admin account (ADR 26): the unprivileged ContainerUser can't read workspaces under
+# C:\Users\<you>, because the host's ACLs decide. It stays inside the container's boundary.
+USER ContainerAdministrator
+# Home of that user; compose sets HOME and AGENTS_HOME to the same place at run time.
+ENV AGENTS_HOME=C:\Users\ContainerAdministrator
+
+# Git's usr\bin (coreutils, sed, awk, find) and bin before System32, so scripts never meet find.exe and the like.
+# Global npm installs and tool binaries go outside the profile; ~/.cache/bin is made at start (start.sh).
+ENV NPM_CONFIG_PREFIX=C:\npm-global
+ENV PATH="C:\git\usr\bin;C:\git\bin;C:\git\cmd;C:\node;C:\npm-global;C:\python;C:\tools;$AGENTS_HOME\.cache\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0"
+
+# Harnesses with a bash tool find Git Bash through these; the rest read SHELL.
+ENV SHELL=C:\git\bin\bash.exe `
+    CLAUDE_CODE_GIT_BASH_PATH=C:\git\bin\bash.exe `
+    OPENCODE_GIT_BASH_PATH=C:\git\bin\bash.exe
+
+# Credentials live in the shared git dir so every harness (and every restart) reuses them.
+# Set via env, not git config: it applies last, so a host-copied empty
+# "credential.<url>.helper =" cannot reset it.
+ENV GIT_CONFIG_COUNT=1 `
+    GIT_CONFIG_KEY_0=credential.helper `
+    GIT_CONFIG_VALUE_0="store --file C:/Users/ContainerAdministrator/.config/git/credentials"
+
+# ~/.cache is a named volume (compose.yaml, ADR 25): downloads, caches and standalone tools survive
+# runs without going through the workspace mount. Not created here: a volume needs an empty target.
+ENV npm_config_cache=$AGENTS_HOME\.cache\npm `
+    XDG_CACHE_HOME=$AGENTS_HOME\.cache
+
+CMD ["bash"]

@@ -10,7 +10,9 @@ instructions="$HOME/.pi/agent/AGENTS.md"
 # Sessions live in a folder named after the working directory.
 find_session() {
     local key
-    key=${PWD#/}
+    # The folder in the OS's own form (C:\x on Windows).
+    key=$(native_cwd)
+    key=${key#[/\\]}
     key=${key//[\/\\:]/-}
     compgen -G "$HOME/.pi/agent/sessions/--$key--/*" >/dev/null || return 1
     resume=(pi --continue)
