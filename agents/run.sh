@@ -49,8 +49,10 @@ else
     AGENTS_WORKSPACE_TARGET=$(cd "${ws:-workspace}" && pwd -P)
 fi
 export AGENTS_WORKSPACE_TARGET
-# Git Bash on Windows would hand docker C:/... instead; these are container paths.
+# Git Bash on Windows would hand docker C:/... instead: these variables are container paths, and
+# the arguments (/init, /c/x) go to the container untouched.
 export MSYS2_ENV_CONV_EXCL="AGENTS_WORKSPACE_TARGET;AGENTS_DIR;AGENTS_HOME${MSYS2_ENV_CONV_EXCL:+;$MSYS2_ENV_CONV_EXCL}"
+export MSYS2_ARG_CONV_EXCL='*'
 
 # Prebuilt images come from ghcr.io unless AGENTS_LOCAL_BUILD is non-empty.
 local_build=${AGENTS_LOCAL_BUILD:-$(envval AGENTS_LOCAL_BUILD)}
@@ -138,13 +140,13 @@ if [ ! -e shared/git/config ]; then
 fi
 
 # The core (options, harness menu, last-harness) runs in the base image, with every argument
-# untouched: Git Bash must not convert them (env conversion stays).
+# untouched.
 ensure_image base
 # Without a terminal the core must not swallow stdin meant for the harness (echo hi | run-agent claude -p).
 if [ -n "$tty" ]; then
-    MSYS2_ARG_CONV_EXCL='*' docker compose run --rm -T base "$@" </dev/null || exit $?
+    docker compose run --rm -T base "$@" </dev/null || exit $?
 else
-    MSYS2_ARG_CONV_EXCL='*' docker compose run --rm base "$@" || exit $?
+    docker compose run --rm base "$@" || exit $?
 fi
 result=$(cat "$launch/result" 2>/dev/null || true)
 case $result in
@@ -164,5 +166,5 @@ ensure_image "$h"
 mv -f "$launch/last-harness" shared/.last-harness
 # Not exec'd: the launch dir is removed afterwards. The harness reads its arguments from it.
 rc=0
-MSYS2_ARG_CONV_EXCL='*' docker compose run --rm ${tty:+"$tty"} "$h" || rc=$?
+docker compose run --rm ${tty:+"$tty"} "$h" || rc=$?
 exit "$rc"

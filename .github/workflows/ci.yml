@@ -451,6 +451,17 @@ jobs:
           grep -q 'launched' second.log
           if grep -q '^Building' second.log; then echo "unexpected rebuild"; exit 1; fi
 
+      # Inside the container Git Bash turns a leading-slash argument (/init) into a path (C:/git/init) when it
+      # starts a native program, so a harness argument needs //init (README). The plain result is only logged.
+      - name: Leading-slash arguments need a double slash
+        env:
+          AGENTS_LOCAL_BUILD: "1"
+        run: |
+          show='console.log(process.argv[1])'
+          echo "/init arrives as: $(./run-agent.bat --harness claude --exec node -e "$show" /init | tr -d '')"
+          out=$(./run-agent.bat --harness claude --exec node -e "$show" //init | tr -d ''); echo "//init arrives as: $out"
+          test "$out" = /init
+
       # Without a terminal, stdin belongs to the harness, not to the launcher core's container.
       - name: Piped stdin reaches the harness
         env:
