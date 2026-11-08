@@ -458,8 +458,8 @@ jobs:
           AGENTS_LOCAL_BUILD: "1"
         run: |
           show='console.log(process.argv[1])'
-          echo "/init arrives as: $(./run-agent.bat --harness claude --exec node -e "$show" /init | tr -d '')"
-          out=$(./run-agent.bat --harness claude --exec node -e "$show" //init | tr -d ''); echo "//init arrives as: $out"
+          echo "/init arrives as: $(./run-agent.bat --harness claude --exec node -e "$show" /init | tr -d '\r')"
+          out=$(./run-agent.bat --harness claude --exec node -e "$show" //init | tr -d '\r'); echo "//init arrives as: $out"
           test "$out" = /init
 
       # Without a terminal, stdin belongs to the harness, not to the launcher core's container.
