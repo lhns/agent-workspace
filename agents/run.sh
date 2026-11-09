@@ -42,6 +42,8 @@ export AGENTS_PLATFORM=$platform
 if [ "$platform" = windows ]; then
     export AGENTS_IMAGE_SUFFIX=-windows AGENTS_DOCKERFILE=Dockerfile.windows
     export AGENTS_DIR=C:/agent-workspace AGENTS_HOME=C:/Users/ContainerAdministrator
+    # Where hermes' state folder is mounted: a profile of the image's hermes root (ADR 27).
+    export AGENTS_HERMES_STATE=C:/Users/ContainerAdministrator/AppData/Local/hermes/profiles/agent
     # In Windows form. Only C: can be mounted at its own path; any other drive goes to C:\workspace.
     AGENTS_WORKSPACE_TARGET=$(cygpath -aw "${ws:-workspace}" 2>/dev/null) || AGENTS_WORKSPACE_TARGET=
     case $AGENTS_WORKSPACE_TARGET in [Cc]:\\*) ;; *) AGENTS_WORKSPACE_TARGET='C:\workspace' ;; esac
@@ -51,7 +53,7 @@ fi
 export AGENTS_WORKSPACE_TARGET
 # Git Bash on Windows would hand docker C:/... instead: these variables are container paths, and
 # the arguments (/init, /c/x) go to the container untouched.
-export MSYS2_ENV_CONV_EXCL="AGENTS_WORKSPACE_TARGET;AGENTS_DIR;AGENTS_HOME${MSYS2_ENV_CONV_EXCL:+;$MSYS2_ENV_CONV_EXCL}"
+export MSYS2_ENV_CONV_EXCL="AGENTS_WORKSPACE_TARGET;AGENTS_DIR;AGENTS_HOME;AGENTS_HERMES_STATE${MSYS2_ENV_CONV_EXCL:+;$MSYS2_ENV_CONV_EXCL}"
 export MSYS2_ARG_CONV_EXCL='*'
 
 # Prebuilt images come from ghcr.io unless AGENTS_LOCAL_BUILD is non-empty.

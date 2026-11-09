@@ -16,7 +16,7 @@ case $h in
     opencode) bin=opencode; state=$HOME/.config/opencode;  noupdate=OPENCODE_DISABLE_AUTOUPDATE ;;
     pi)       bin=pi;       state=$HOME/.pi/agent;         noupdate=PI_SKIP_VERSION_CHECK ;;
     cline)    bin=cline;    state=$HOME/.cline;            noupdate=CLINE_NO_AUTO_UPDATE ;;
-    hermes)   bin=hermes;   state=$HOME/.hermes;           noupdate= ;;  # set in config.yaml by the entrypoint
+    hermes)   bin=hermes;   state=$(norm "${HERMES_HOME:-$HOME/.hermes}"); noupdate= ;;  # set in config.yaml by the entrypoint
     *) echo "unknown harness $h" >&2; exit 2 ;;
 esac
 fail=0

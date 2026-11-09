@@ -1,0 +1,43 @@
+# escape=`
+FROM agent-workspace-base-windows
+# Hermes' own Windows installer (ADR 27), pinned to the release commit like the Linux image. It
+# clones the checkout, fetches its own Git, Python, Node and ripgrep into the hermes root
+# (%LOCALAPPDATA%\hermes: code, tools, dependency environments) and puts the command in
+# %LOCALAPPDATA%\hermes\bin.
+# renovate: datasource=github-tags depName=NousResearch/hermes-agent
+ARG HERMES_VERSION=v0.23.0
+ARG HERMES_COMMIT=2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19
+# Its dependency environments have paths past MAX_PATH.
+RUN reg add HKLM\SYSTEM\CurrentControlSet\Control\FileSystem /v LongPathsEnabled /t REG_DWORD /d 1 /f
+# Download first, so a failed download (e.g. HTTP 429) can't build an empty image. The installer
+# runs one stage at a time to patch between them.
+RUN curl.exe -fsSL --retry 5 --retry-all-errors -o C:\install-hermes.ps1 `
+        https://raw.githubusercontent.com/NousResearch/hermes-agent/%HERMES_COMMIT%/scripts/install.ps1 `
+    && powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\install-hermes.ps1 `
+        -NonInteractive -Stage prerequisites -Branch main -Commit %HERMES_COMMIT% `
+    && powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\install-hermes.ps1 `
+        -NonInteractive -Stage repository -Branch main -Commit %HERMES_COMMIT%
+# Hermes' ffmpeg (voice features) fails to start on Server Core (exit 0xC0000135, a missing DLL),
+# and the install fails when it can't run. Declare it unavailable on this target; the rest of hermes works.
+RUN powershell -NoProfile -NonInteractive -Command "$f = Join-Path $env:LOCALAPPDATA 'hermes\hermes-agent\pm\packages.py'; $t = [IO.File]::ReadAllText($f); $n = $t -replace '(?m)^(    gaps = \{target: .BtbN Linux builds link glibc dynamically.*)$', ('$1' + [char]10 + '    gaps = {**gaps, ''win32-x64'': ''fails to start on Server Core''}'); if ($n -eq $t) { throw 'ffmpeg patch did not apply' }; [IO.File]::WriteAllText($f, $n, (New-Object Text.UTF8Encoding $false))"
+# Hermes deletes bytecode at its first launch of a checkout, so the last steps launch it once, then
+# compile. In the same layer: a separate step failed to activate this layer on the CI runners.
+RUN powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\install-hermes.ps1 `
+        -NonInteractive -Stage venv -Branch main -Commit %HERMES_COMMIT% -SkipBrowser -SkipComputerUse `
+    && powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\install-hermes.ps1 `
+        -NonInteractive -Stage python-deps -Branch main -Commit %HERMES_COMMIT% -SkipBrowser -SkipComputerUse `
+    && powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\install-hermes.ps1 `
+        -NonInteractive -Stage products -Branch main -Commit %HERMES_COMMIT% -SkipBrowser -SkipComputerUse `
+    && powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\install-hermes.ps1 `
+        -NonInteractive -Stage config -Branch main -Commit %HERMES_COMMIT% -SkipBrowser -SkipComputerUse `
+    && del C:\install-hermes.ps1 `
+    && mkdir "%LOCALAPPDATA%\hermes\profiles\agent" `
+    && "%LOCALAPPDATA%\hermes\bin\hermes.exe" --help > NUL `
+    && powershell -NoProfile -NonInteractive -Command "& (Get-ChildItem $env:LOCALAPPDATA\hermes\tools\python-*\python.exe | Select-Object -First 1).FullName -m compileall -q -j0 -x node_modules $env:LOCALAPPDATA\hermes\hermes-agent | Out-Null; exit 0"
+ENV PATH="$AGENTS_HOME\AppData\Local\hermes\bin;${PATH}"
+# The state folder (agents/hermes/config) is mounted here at run time, as a profile of the
+# hermes root above, so hermes finds its code and dependency environments in the image and
+# keeps only state in the mount. The profile folder exists in the image too (hermes refuses a
+# missing profile) so that a container without the mount starts. Set last: the installer above
+# needs the root as the home.
+ENV HERMES_HOME=$AGENTS_HOME\AppData\Local\hermes\profiles\agent

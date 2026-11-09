@@ -146,15 +146,13 @@ db "$cl" "INSERT INTO sessions VALUES ('old', '$nwork', 0, NULL, '2020-01-01', '
 out=$(plain cline ask);                  check "cline: resumes the newest session of this folder that has messages" "$out" "STUB cline --id old"
 out=$(pty "$DOWN$ENTER" cline);          tcheck "cline: picker" "$out" "STUB cline history"
 
-if ! is_windows; then # hermes has no Windows image
 hm=$HOME/.hermes/state.db
 db "$hm" "CREATE TABLE sessions (source TEXT, message_count INTEGER, git_repo_root TEXT, cwd TEXT)" \
-    "INSERT INTO sessions VALUES ('cli', 3, NULL, '/elsewhere')" "INSERT INTO sessions VALUES ('cli', 0, NULL, '$work')" "INSERT INTO sessions VALUES ('cron', 3, NULL, '$work')"
+    "INSERT INTO sessions VALUES ('cli', 3, NULL, '/elsewhere')" "INSERT INTO sessions VALUES ('cli', 0, NULL, '$nwork')" "INSERT INTO sessions VALUES ('cron', 3, NULL, '$nwork')"
 out=$(plain hermes ask);                 check "hermes: other folder, empty or non-cli sessions: fresh" "$out" "-c" no
-db "$hm" "INSERT INTO sessions VALUES ('cli', 3, NULL, '$work')"
+db "$hm" "INSERT INTO sessions VALUES ('cli', 3, NULL, '$nwork')"
 out=$(plain hermes ask);                 check "hermes: session resumes" "$out" "STUB hermes -c"
 out=$(pty "$DOWN$ENTER" hermes);         tcheck "hermes: picker" "$out" "STUB hermes sessions browse"
-fi
 
 # The database may sit in a folder with a space (a file URI must quote it); sql() hands Python the
 # path in its own form.

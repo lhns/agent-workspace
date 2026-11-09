@@ -1,6 +1,6 @@
 # 26. Windows containers: the same launcher core, detected from the daemon
 
-Status: Accepted. Refines [ADR 4](0004-shared-base-image.md) (a second base image), [ADR 12](0012-non-root-agent-user.md) (the user), [ADR 20](0020-workspace-at-host-path.md) (the host path) and [ADR 24](0024-docker-for-agents-through-remote-docker.md) (not available).
+Status: Accepted. Refines [ADR 4](0004-shared-base-image.md) (a second base image), [ADR 12](0012-non-root-agent-user.md) (the user), [ADR 20](0020-workspace-at-host-path.md) (the host path) and [ADR 24](0024-docker-for-agents-through-remote-docker.md) (not available). [ADR 27](0027-hermes-windows.md) makes hermes available and corrects the host requirement.
 
 ## Context
 Some machines have only a Windows Docker daemon (no WSL2, no Linux VM), so the agents must run in Windows containers. They should behave like the Linux ones: one launcher, menus, resume, `--exec`, `--workdir`, the generated instructions, the cache volume, prebuilt images on ghcr. A spike on GitHub's `windows-2025` runners (process isolation) decided the open points:
