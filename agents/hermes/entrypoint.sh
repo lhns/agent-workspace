@@ -14,12 +14,10 @@ set -u
 # dependency environments in the image. A separate gateway is refused for a profile unless it
 # opts out of the host multiplexer. Config the image can't hold (the folder is mounted):
 if is_windows; then
-    cfg=$HERMES_HOME/config.yaml
-    setting() { # key, value, pattern that shows it is already set
-        grep -qi "$3" "$cfg" 2>/dev/null || hermes config set "$1" "$2" >/dev/null 2>&1 || echo "Could not set hermes $1." >&2
-    }
-    setting updates.check false 'check: false'
-    setting gateway.standalone true 'standalone: true'
+    for kv in "updates.check false" "gateway.standalone true"; do
+        # shellcheck disable=SC2086 # key and value, split on purpose
+        hermes config set $kv >/dev/null 2>&1 || echo "Could not set hermes ${kv% *}." >&2
+    done
     exec "$@"
 fi
 
