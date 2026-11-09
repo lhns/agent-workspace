@@ -449,7 +449,7 @@ jobs:
         run: |
           set -o pipefail
           ./run-agent.bat --workdir . --harness hermes --exec bash tests/hermes-state.test.sh set 2>&1 | tee hermes-set.log
-          grep -q 'persisted: yes' agents/hermes/config/config.yaml
+          grep -q 'persisted: from-ci' agents/hermes/config/config.yaml
           ./run-agent.bat --workdir . --harness hermes --exec bash tests/hermes-state.test.sh check 2>&1 | tee hermes-check.log
           grep -q 'state found' hermes-check.log
           ./run-agent.bat --workdir . --harness hermes --exec bash tests/hermes-state.test.sh gateway 2>&1 | tee hermes-gateway.log

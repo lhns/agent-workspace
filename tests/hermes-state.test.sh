@@ -8,10 +8,10 @@ set -u
 cfg=$HERMES_HOME/config.yaml
 case ${1:-} in
     set)
-        hermes config set ci.persisted yes || exit 1
-        grep -q 'persisted: yes' "$cfg" || { echo "FAIL: the value is not in $cfg" >&2; exit 1; } ;;
+        hermes config set ci.persisted from-ci || exit 1
+        grep -q 'persisted: from-ci' "$cfg" || { echo "FAIL: the value is not in $cfg" >&2; exit 1; } ;;
     check)
-        grep -q 'persisted: yes' "$cfg" || { echo "FAIL: the value from the earlier container is missing in $cfg" >&2; exit 1; }
+        grep -q 'persisted: from-ci' "$cfg" || { echo "FAIL: the value from the earlier container is missing in $cfg" >&2; exit 1; }
         grep -q 'check: false' "$cfg" || { echo "FAIL: updates.check is not false in $cfg" >&2; exit 1; }
         [ ! -d "$HERMES_HOME/installs" ] || { echo "FAIL: a dependency environment was built in the mounted folder" >&2; exit 1; }
         echo "state found" ;;
