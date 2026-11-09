@@ -253,7 +253,7 @@ jobs:
       # The hermes state mount target (run.sh, run.bat) and HERMES_HOME in the image must be the same folder (ADR 27).
       - name: Hermes state path agrees
         run: |
-          p() { grep -ho 'AppData[/\\]Local[/\\]hermes[/\\]profiles[/\\][A-Za-z]*' "$@" | tr '\\' '/' | sort -u; }
+          p() { grep -ho 'AppData[/\\]Local[/\\]hermes[/\\]profiles[/\\][A-Za-z]*' "$@" | tr "\\\\" / | sort -u; }
           [ -n "$(p agents/run.sh)" ] && [ "$(p agents/run.sh)" = "$(p agents/run.bat)" ] && [ "$(p agents/run.sh)" = "$(p agents/hermes/Dockerfile.windows)" ] ||
             { echo "hermes state path differs between run.sh, run.bat and Dockerfile.windows"; exit 1; }
       # The Windows Dockerfiles install the same harness versions (Renovate updates both) and the same node major.
