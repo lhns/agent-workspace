@@ -31,9 +31,9 @@ RUN powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\insta
     && powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\install-hermes.ps1 `
         -NonInteractive -Stage config -Branch main -Commit %HERMES_COMMIT% -SkipBrowser -SkipComputerUse `
     && del C:\install-hermes.ps1 `
-    && "%LOCALAPPDATA%\hermesin\hermes.exe" --help > NUL `
-    && powershell -NoProfile -NonInteractive -Command "& (Get-ChildItem $env:LOCALAPPDATA\hermes	ools\python-*\python.exe | Select-Object -First 1).FullName -m compileall -q -j0 -x node_modules $env:LOCALAPPDATA\hermes\hermes-agent | Out-Null; exit 0"
-ENV PATH="$AGENTS_HOME\AppData\Local\hermesin;${PATH}"
+    && "%LOCALAPPDATA%\hermes\bin\hermes.exe" --help > NUL `
+    && powershell -NoProfile -NonInteractive -Command "& (Get-ChildItem $env:LOCALAPPDATA\hermes\tools\python-*\python.exe | Select-Object -First 1).FullName -m compileall -q -j0 -x node_modules $env:LOCALAPPDATA\hermes\hermes-agent | Out-Null; exit 0"
+ENV PATH="$AGENTS_HOME\AppData\Local\hermes\bin;${PATH}"
 # The state folder (agents/hermes/config) is mounted here at run time, as a profile of the
 # hermes root above, so hermes finds its code and dependency environments in the image and
 # keeps only state in the mount. Set last: the installer above needs the root as the home.
