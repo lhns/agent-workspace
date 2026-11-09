@@ -11,7 +11,12 @@ instructions=""
 # workspace is the git root, else the folder; empty launch stubs don't count.
 find_session() {
     local dir
-    dir=$(git rev-parse --show-toplevel 2>/dev/null) || dir=$PWD
+    # Hermes stores native paths; Git Bash prints C:/x for the git root.
+    if dir=$(git rev-parse --show-toplevel 2>/dev/null); then
+        ! is_windows || dir=$(cygpath -w "$dir")
+    else
+        dir=$(native_cwd)
+    fi
     sql "${HERMES_HOME:-$HOME/.hermes}/state.db" \
         "SELECT 1 FROM sessions WHERE source IN ('cli', 'oneshot') AND message_count > 0 AND (git_repo_root = ?1 OR (COALESCE(git_repo_root, '') = '' AND cwd = ?1))" \
         "$dir" >/dev/null || return 1
