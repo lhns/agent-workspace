@@ -197,15 +197,28 @@ WS=/workspace win claude;              check "windows: the plain-compose default
 check "windows: the fallback is what is recorded" "$(recorded 'C:\workspace')" claude
 
 # Harnesses without a Dockerfile.windows are refused on Windows, by name; elsewhere they are fine.
-win hermes;                            has "windows: hermes is refused" "$out" "'hermes' is not available in Windows containers (available: claude cline opencode pi)"
-check "windows: hermes is refused: exit code, nothing handed off" "$code-$(exists harness)" 1-no
-win --harness hermes;                  has "windows: --harness hermes is refused" "$out" "not available in Windows containers"
-AGENTS_HARNESS=hermes win;             has "windows: AGENTS_HARNESS=hermes is refused" "$out" "not available in Windows containers"
+# Every harness has one now, so a scratch copy of agents/ gets a made-up one (nowin) that lacks it.
+fakedir=/tmp/aw-fake-agents
+rm -rf "$fakedir"; mkdir -p "$fakedir"
+mkdir "$fakedir/agents"; cp "$(dirname "$core")"/*.sh "$fakedir/agents/"
+for h in "$(dirname "$core")"/*/harness.sh; do
+    d=$fakedir/agents/$(basename "$(dirname "$h")"); mkdir "$d"; cp "$h" "$d/"
+    ! [ -f "$(dirname "$h")/Dockerfile.windows" ] || : >"$d/Dockerfile.windows"
+done
+mkdir "$fakedir/agents/nowin"; cp "$fakedir/agents/claude/harness.sh" "$fakedir/agents/nowin/harness.sh"
+real_core=$core real_dir=${AGENTS_DIR:-}
+core=$fakedir/agents/launch.sh; export AGENTS_DIR=$fakedir
+win nowin;                             has "windows: nowin is refused" "$out" "'nowin' is not available in Windows containers (available: claude cline hermes opencode pi)"
+check "windows: nowin is refused: exit code, nothing handed off" "$code-$(exists harness)" 1-no
+win --harness nowin;                   has "windows: --harness nowin is refused" "$out" "not available in Windows containers"
+AGENTS_HARNESS=nowin win;              has "windows: AGENTS_HARNESS=nowin is refused" "$out" "not available in Windows containers"
 win nope;                              has "windows: an unknown name is still unknown" "$out" "Unknown harness 'nope'"
+printf '%s\tnowin\n*\tnowin\n' "$A" >"$state"
+win;                                   has "windows: a recorded nowin is not offered (no terminal)" "$out" "No terminal and no harness recorded; pass one: claude cline hermes opencode pi"
+if ! is_windows; then run nowin;       check "linux: nowin launches" "$(field harness)" nowin; fi
+core=$real_core; if [ -n "$real_dir" ]; then export AGENTS_DIR=$real_dir; else unset AGENTS_DIR; fi
+win hermes;                            check "windows: hermes is available" "$(field harness)" hermes
 win opencode;                          check "windows: an available harness launches" "$(field harness)" opencode
-printf '%s\thermes\n*\thermes\n' "$A" >"$state"
-win;                                   has "windows: a recorded hermes is not offered (no terminal)" "$out" "No terminal and no harness recorded; pass one: claude cline opencode pi"
-if ! is_windows; then run hermes;      check "linux: hermes launches" "$(field harness)" hermes; fi
 
 # shared/.last-harness: per folder and overall, written by named launches too.
 rm -f "$state"
@@ -266,6 +279,8 @@ check "menu: Ctrl-C records nothing" "$(recorded "$A")" pi
 
 # The menu of a Windows container lists only the available harnesses.
 printf '%s\tpi\n*\tpi\n' "$A" >"$state"
+core=$fakedir/agents/launch.sh; export AGENTS_DIR=$fakedir
 AGENTS_PLATFORM=windows pty "$ENTER" ""
-case $out in *hermes*) echo "FAIL windows menu: lists hermes: $out" >&2; fail=1 ;; *claude*cline*opencode*) echo "ok   windows menu: no hermes" ;; *) echo "FAIL windows menu: $out" >&2; fail=1 ;; esac
+case $out in *nowin*) echo "FAIL windows menu: lists nowin: $out" >&2; fail=1 ;; *claude*cline*hermes*opencode*) echo "ok   windows menu: only the available ones" ;; *) echo "FAIL windows menu: $out" >&2; fail=1 ;; esac
+core=$real_core
 exit $fail

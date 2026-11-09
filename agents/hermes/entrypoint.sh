@@ -6,6 +6,23 @@
 # and refuse symlinks and sockets. So the home stays in the container and is synced with the
 # mount at start and after the command; rsync copies only what changed.
 set -u
+# shellcheck source=../os.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../os.sh"
+
+# Windows (ADR 27): hermes there accepts the mounted folder as its home, so nothing is copied.
+# The image sets HERMES_HOME to a profile of its own hermes root, which keeps the code, tools and
+# dependency environments in the image. A separate gateway is refused for a profile unless it
+# opts out of the host multiplexer. Config the image can't hold (the folder is mounted):
+if is_windows; then
+    cfg=$HERMES_HOME/config.yaml
+    setting() { # key, value, pattern that shows it is already set
+        grep -qi "$3" "$cfg" 2>/dev/null || hermes config set "$1" "$2" >/dev/null 2>&1 || echo "Could not set hermes $1." >&2
+    }
+    setting updates.check false 'check: false'
+    setting gateway.standalone true 'standalone: true'
+    exec "$@"
+fi
+
 home=${HERMES_HOME:-$HOME/.hermes}
 data=${AGENTS_HOME:-/home/agent}/.hermes-config
 # Hermes' bootstrap state lives in the one revision dir under installs/; skipped if that isn't unique.

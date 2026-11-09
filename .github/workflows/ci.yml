@@ -304,7 +304,7 @@ jobs:
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
 
-  # Builds the base and the four harness images that exist for Windows through the real launcher
+  # Builds the base and the harness images (all five) through the real launcher
   # (run-agent.bat), then smoke-tests each, runs start.sh and launch.sh tests inside them and, on main,
   # publishes the -windows tags and checks the pull path. The classic builder is used (no BuildKit).
   windows-images:
@@ -367,14 +367,14 @@ jobs:
           AGENTS_LOCAL_BUILD: "1"
         run: |
           set -o pipefail
-          for h in claude opencode pi cline; do
+          for h in claude opencode pi cline hermes; do
             echo "::group::$h"
             ./run-agent.bat --workdir . --harness "$h" --exec bash tests/smoke.sh "$h" /c/workspace 2>&1 | tee "first-$h.log"
             grep -q "^Building $h image" "first-$h.log"
             echo "::endgroup::"
           done
           # Every state dir in a harness's dirs= line must have been created by the launcher.
-          for h in claude opencode pi cline; do
+          for h in claude opencode pi cline hermes; do
             sed -n 's/^dirs="\(.*\)"$/\1/p' "agents/$h/harness.sh" | tr ' ' '\n' |
               while read -r d; do test -d "agents/$h/$d" || exit 1; done
           done
@@ -385,7 +385,7 @@ jobs:
       - name: The TUI stays up in a pseudo-console
         run: |
           fail=0
-          for h in claude opencode pi cline; do
+          for h in claude opencode pi cline hermes; do
             docker rm -f "smoke-$h" > /dev/null 2>&1 || true
             docker run -dt --name "smoke-$h" -e HOME=C:/Users/ContainerAdministrator "agent-workspace-$h-windows" bash -c "$h" > /dev/null
             sleep 15
@@ -404,7 +404,7 @@ jobs:
           layers() { docker image inspect --format '{{json .RootFS.Layers}}' "$1"; }
           prefix() { node -e 'const [b, h] = process.argv.slice(1).map(JSON.parse); process.exit(b.length > 0 && b.every((x, i) => h[i] === x) ? 0 : 1)' "$1" "$2"; }
           base=$(layers agent-workspace-base-windows)
-          for h in claude opencode pi cline; do
+          for h in claude opencode pi cline hermes; do
             prefix "$base" "$(layers "agent-workspace-$h-windows")" || { echo "base layers are not a prefix of the $h layers"; exit 1; }
           done
 
@@ -440,6 +440,20 @@ jobs:
           ./run-agent.sh --workdir . --harness claude --exec bash -c 'echo launched' 2>&1 | tee sh.log
           grep -q '^launched$' sh.log
           if grep -q '^Building' sh.log; then echo "unexpected rebuild"; exit 1; fi
+
+      # Hermes' state folder is mounted as a profile of the image's hermes root (ADR 27): a value written in one
+      # container is read by the next one and sits in the host folder; the gateway of that profile starts.
+      - name: Hermes state survives a container restart
+        env:
+          AGENTS_LOCAL_BUILD: "1"
+        run: |
+          set -o pipefail
+          ./run-agent.bat --workdir . --harness hermes --exec bash tests/hermes-state.test.sh set 2>&1 | tee hermes-set.log
+          grep -q 'persisted: yes' agents/hermes/config/config.yaml
+          ./run-agent.bat --workdir . --harness hermes --exec bash tests/hermes-state.test.sh check 2>&1 | tee hermes-check.log
+          grep -q 'state found' hermes-check.log
+          ./run-agent.bat --workdir . --harness hermes --exec bash tests/hermes-state.test.sh gateway 2>&1 | tee hermes-gateway.log
+          grep -q 'gateway started' hermes-gateway.log
 
       # AGENTS_LOCAL_BUILD stays set so a missing pull can't hide a rebuild: the `^Building` check is meaningful.
       - name: Second launch does not rebuild
@@ -478,7 +492,7 @@ jobs:
           GH_ACTOR: ${{ github.actor }}
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
-          for name in base claude opencode pi cline; do
+          for name in base claude opencode pi cline hermes; do
             ref="$AGENTS_IMAGE_PREFIX-$name:$(cat "agents/$name/.build-windows.sha256")-windows"
             if docker manifest inspect "$ref" > /dev/null 2>&1; then
               echo "$ref already exists"
@@ -513,7 +527,7 @@ jobs:
           prefix() { node -e 'const [b, h] = process.argv.slice(1).map(JSON.parse); process.exit(b.length > 0 && b.every((x, i) => h[i] === x) ? 0 : 1)' "$1" "$2"; }
           base=$(layers "$AGENTS_IMAGE_PREFIX-base:$(cat agents/base/.build-windows.sha256)-windows")
           echo "base:    $base"
-          for h in claude opencode pi cline; do
+          for h in claude opencode pi cline hermes; do
             hl=$(layers "$AGENTS_IMAGE_PREFIX-$h:$(cat "agents/$h/.build-windows.sha256")-windows")
             echo "$h: $hl"
             prefix "$base" "$hl" || { echo "published base layers are not a prefix of the published $h layers"; exit 1; }

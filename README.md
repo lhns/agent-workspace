@@ -2,7 +2,7 @@
 
 Run a coding agent in Docker, with only a workspace folder and its own state mounted. One repo, one folder per harness, shared tools and settings.
 
-Harnesses: `claude` (Claude Code), `opencode`, `pi`, `cline`, `hermes`. Docker with Compose is required; Linux and, for all but hermes, Windows containers work (see [Windows containers](#windows-containers)).
+Harnesses: `claude` (Claude Code), `opencode`, `pi`, `cline`, `hermes`. Docker with Compose is required; Linux and Windows containers work (see [Windows containers](#windows-containers)).
 
 ## Run
 
@@ -54,12 +54,12 @@ The first run, and any run after a `git pull` that changed a Dockerfile (or afte
 
 ## Windows containers
 
-With a Docker daemon that runs Windows containers (Docker Engine on Windows without WSL2 or a Linux VM), the launchers use Windows images on their own: they ask `docker info` once, and everything below follows. Linux containers are unchanged. `AGENTS_PLATFORM=linux|windows` (shell or `.env`) overrides the detection.
+With a Docker daemon that runs Windows containers (Docker Engine on Windows without WSL2 or a Linux VM), the launchers use Windows images on their own: they ask `docker info` once, and everything below follows. Linux containers are unchanged. Usage is unchanged too: start `run-agent` (or the `install.bat` shortcut) as usual; there is nothing to configure. `AGENTS_PLATFORM=linux|windows` (shell or `.env`) overrides the detection.
 
-- **Works:** `claude`, `opencode`, `pi` and `cline`, with the same launcher, options, menus, resume, `--exec`, `--workdir`, cache volume and generated instructions. The agents run their tools in Git Bash, except cline, whose tools run in PowerShell (it has no other choice on Windows). `~/.cache` is the same volume; sessions and config stay under `agents/<harness>/config`.
-- **Not available:** `hermes` (the menu does not list it, naming it is an error) and [Docker inside the agents](#docker-inside-the-agents): `AGENTS_DOCKER` prints one line and the agent starts without it.
+- **Works:** all five harnesses, with the same launcher, options, menus, resume, `--exec`, `--workdir`, cache volume and generated instructions. The agents run their tools in Git Bash, except cline, whose tools run in PowerShell (it has no other choice on Windows). `~/.cache` is the same volume; sessions and config stay under `agents/<harness>/config`.
+- **Not available:** [Docker inside the agents](#docker-inside-the-agents): `AGENTS_DOCKER` prints one line and the agent starts without it.
 - **Size and time:** the images are about 9 GB (Server Core 5.6 GB, base 6.1 GB, each harness adds a few hundred MB), and the first pull takes minutes. Prebuilt images are `<prefix>-<name>:<hash>-windows` on ghcr.io; locally they are `agent-workspace-<name>-windows`, with `agents/<name>/.build-windows.sha256`, so Linux and Windows images never collide.
-- **Host:** the images are `ltsc2025`, which runs in process isolation only on a Windows Server 2025 / Windows 11 24H2 host or newer. On any other host set `AGENTS_ISOLATION=hyperv` (Hyper-V isolation; slower to start, needs the feature).
+- **Host:** the images are `ltsc2025`, which needs a host on build 26100 (Windows Server 2025 / Windows 11 24H2) for process isolation. A newer host needs `AGENTS_ISOLATION=hyperv` (Hyper-V isolation; slower to start, needs the feature). An older host (Server 2022, Windows 10, Windows 11 before 24H2) is not supported, not even with Hyper-V.
 - **User:** the agents run as `ContainerAdministrator` (home `C:\Users\ContainerAdministrator`), not as an unprivileged user: a container user cannot read workspaces under `C:\Users\<you>` because the host's file permissions decide. It is an admin inside the container only.
 - **Workspace:** a folder on `C:` is mounted at its own path (`C:\code\foo` stays `C:\code\foo`), so conversations are kept per folder as on Linux. A folder on another drive is mounted at `C:\workspace` (all conversations of such folders share it), and so is one that would hide a folder of the image (`C:\Windows`, `C:\Program Files`, `C:\git`, ...).
 - **Menus:** the arrow-key menus need a terminal. CI cannot drive one in a Windows container, so they are checked by hand on a real host: `run-agent` with no arguments (harness menu), start in a folder with an earlier conversation (resume menu), and `--exec cmd /c ver`.
@@ -122,7 +122,7 @@ A folder `agents/<name>/` with a `Dockerfile` (`FROM` the base image; a `Dockerf
 - `AGENTS_LOCAL_BUILD`: non-empty (e.g. `1`) always builds the image locally instead of pulling it.
 - `AGENTS_IMAGE_PREFIX`: where prebuilt images are pulled from, default `ghcr.io/lhns/agent-workspace`; set it for a fork or mirror.
 - `AGENTS_PLATFORM`: `linux` or `windows` to force the kind of containers; empty (the default) asks the Docker daemon. See [Windows containers](#windows-containers).
-- `AGENTS_ISOLATION`: `process` or `hyperv` for Windows containers, passed to Docker as `isolation`; empty is the daemon's default. Needed for `hyperv` when the host is not a Windows Server 2025 / 24H2 build. Ignored for Linux containers.
+- `AGENTS_ISOLATION`: `process` or `hyperv` for Windows containers, passed to Docker as `isolation`; empty is the daemon's default. Set `hyperv` when the host is newer than build 26100. Ignored for Linux containers.
 - `AGENTS_WORKSPACE_CONSISTENCY`: mount consistency options for the workspace, passed to Docker as is (e.g. for remote Docker with caching mounts). Empty means Docker's default.
 - `AGENTS_AUTORESUME`: `ask` (default, also when empty) offers to resume the last conversation for the workspace folder with an arrow-key menu (or to choose another one in the harness's own picker; opencode has none at startup, use `/sessions` there), `yes` resumes without asking, `no` always starts fresh (any case). It only applies when the harness has a conversation for this folder, and `--new` starts fresh. `pick` (the launcher's `--sessions`) opens the harness's session picker instead. The launcher's `--continue`, `--new`, `--sessions` and `--ask` override this setting. The workspace is mounted at its host path (`C:\code\foo` becomes `/c/code/foo` in Linux containers and stays `C:\code\foo` in Windows ones) so conversations are kept per folder; use `/clear`, `/new` or the harness's own picker (`claude --resume`, `pi --resume`, `hermes sessions browse`, `cline history`) for older ones. Conversations stored earlier under `/workspace` don't resume.
 - `AGENTS_HARNESS`: the harness to run when none is given on the command line (a flag or positional harness wins); with it the menu never shows. Shell beats `.env`, so it can be set system-wide.
@@ -186,10 +186,12 @@ With a remote Docker daemon every write to the workspace goes over the network. 
 
 ## Hermes state
 
-Hermes refuses a home folder it can't keep private, so its home (`~/.hermes`) stays inside the container. It is copied from `agents/hermes/config` at start and back when the command exits (rsync, changes only). So:
+**Linux containers.** Hermes refuses a home folder it can't keep private, so its home (`~/.hermes`) stays inside the container. It is copied from `agents/hermes/config` at start and back when the command exits (rsync, changes only). So:
 
 - Changes are saved on exit. A container that is killed (`docker kill`, a crashed host) loses that run's changes. Two hermes containers running at once overwrite each other's state on exit.
-- Plugins that need Python packages: hermes builds a whole Python environment for them, which can't live in a Windows bind mount. It is saved as `agents/hermes/config/.plugin-deps/installs.tar` (a few hundred MB) and unpacked at every start, which adds about a minute on Windows (seconds on Linux). After a hermes image update hermes rebuilds it once, which takes a few minutes.
+- Plugins that need Python packages: hermes builds a whole Python environment for them, which can't live in a bind mount of a Windows host. It is saved as `agents/hermes/config/.plugin-deps/installs.tar` (a few hundred MB) and unpacked at every start, which adds about a minute with a Windows host (seconds on Linux). After a hermes image update hermes rebuilds it once, which takes a few minutes.
+
+**Windows containers.** Hermes' own Windows installer is used, and there the mounted folder works as hermes' home, so nothing is copied: `agents/hermes/config` is mounted as a profile (`agent`) of the hermes install in the image, and everything hermes writes is in the folder at once, even if the container is killed. Differences: the state folder is a profile, so a state folder from Linux containers is not reused as is; plugin dependencies are built in the container and gone with it (hermes rebuilds them when a plugin needs them); hermes has no ffmpeg (Server Core lacks Media Foundation), so voice features are missing. See [ADR 27](docs/adr/0027-hermes-windows.md).
 
 ## Update
 

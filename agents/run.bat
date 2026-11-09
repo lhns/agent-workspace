@@ -47,6 +47,7 @@ if "%AGENTS_PLATFORM%"=="windows" (
     set "AGENTS_DOCKERFILE=Dockerfile.windows"
     set "AGENTS_DIR=C:/agent-workspace"
     set "AGENTS_HOME=C:/Users/ContainerAdministrator"
+    set "AGENTS_HERMES_STATE=C:/Users/ContainerAdministrator/AppData/Local/hermes/profiles/agent"
 )
 if not defined WORKSPACE_DIR if not exist workspace mkdir workspace
 if defined WORKSPACE_DIR if not exist "%WORKSPACE_DIR%\" >&2 echo WORKSPACE_DIR '%WORKSPACE_DIR%' does not exist& exit /b 1

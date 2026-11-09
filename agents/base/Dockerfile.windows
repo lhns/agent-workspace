@@ -3,7 +3,7 @@
 # Windows-only Docker daemon. The scripts run under Git Bash, so every command is bash.exe.
 # ltsc2025 needs a Windows Server 2025 / 24H2 host in process isolation (AGENTS_ISOLATION=hyperv else).
 # CI publishes this image once and builds the harness images on that published image, so they share its layers.
-FROM mcr.microsoft.com/windows/servercore:ltsc2025@sha256:4e5730bddf049d5dd9f758a3b4e6875ecf19b5bfeee5068e07aeeb5df9c63c55
+FROM mcr.microsoft.com/windows/servercore:ltsc2025
 
 LABEL org.opencontainers.image.source=https://github.com/lhns/agent-workspace `
       org.opencontainers.image.licenses=Apache-2.0
@@ -17,8 +17,8 @@ ARG NODE_VERSION=24.22.2
 ARG GIT_VERSION=v2.56.0.windows.4
 ARG GIT_SHA256=b1f3e52216e2ed6882d1bebfd4d3fdf319bec40d2edbbf9fd26ec4fd3fce7ed1
 # renovate: datasource=python-version depName=python
-ARG PYTHON_VERSION=3.15.2
-ARG PYTHON_SHA256=d012f3aa29cf07436dae8aea1fec0fd195c2612a0b059b1f915ae0afb9ad1f62
+ARG PYTHON_VERSION=3.14.10
+ARG PYTHON_SHA256=90905e64a840557d8c1bc4f5b74db3d7ee85e3ffb217611cac1c7813acea4159
 # renovate: datasource=github-releases depName=BurntSushi/ripgrep
 ARG RIPGREP_VERSION=15.2.0
 # renovate: datasource=github-releases depName=jqlang/jq extractVersion=^jq-(?<version>.+)$

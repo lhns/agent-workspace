@@ -6,6 +6,7 @@ name: agent-workspace
 #   AGENTS_DOCKERFILE    Dockerfile or Dockerfile.windows
 #   AGENTS_ISOLATION     process or hyperv for Windows containers; default = the daemon's choice
 #   AGENTS_HOME          the agent user's home (HOME, mount targets)
+#   AGENTS_HERMES_STATE  where hermes' state folder is mounted (Windows only; Linux uses ~/.hermes-config)
 #   AGENTS_DIR           agent-workspace's own files: agents/ (scripts), launch/ (this run's hand-off),
 #                        instructions/ (your AGENTS.md); the base service has shared/ instead of the last two
 # In-container paths are never hardcoded in the scripts: under Git Bash on Windows an absolute
@@ -221,7 +222,8 @@ services:
       - *remote-docker
       - *launch
 
-  # Linux only: there is no Dockerfile.windows, and the launchers never start it there.
+  # Linux: the home stays in the image and entrypoint.sh syncs it with the config folder. Windows
+  # (ADR 27): the folder is mounted as a profile of the image's hermes root (AGENTS_HERMES_STATE).
   hermes:
     <<: *harness
     command: [bash, "${AGENTS_DIR:-/opt/agent-workspace}/agents/start.sh", hermes]
@@ -231,7 +233,7 @@ services:
       isolation: ${AGENTS_ISOLATION:-default}
       args: *proxy
     image: agent-workspace-hermes${AGENTS_IMAGE_SUFFIX:-}
-    # Hermes refuses a bind-mounted home, so this copies its state from and back to the
+    # On Linux hermes refuses a bind-mounted home, so this copies its state from and back to the
     # config folder around each run. Mounted, not built in: script edits need no rebuild.
     entrypoint: [bash, "${AGENTS_DIR:-/opt/agent-workspace}/agents/hermes/entrypoint.sh"]
     volumes:
@@ -239,7 +241,7 @@ services:
       - *git
       - type: bind
         source: ./agents/hermes/config
-        target: ${AGENTS_HOME:-/home/agent}/.hermes-config
+        target: ${AGENTS_HERMES_STATE:-${AGENTS_HOME:-/home/agent}/.hermes-config}
       - *instructions
       - *agents
       - *cache
