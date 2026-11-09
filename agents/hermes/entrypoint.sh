@@ -6,7 +6,7 @@
 # and refuse symlinks and sockets. So the home stays in the container and is synced with the
 # mount at start and after the command; rsync copies only what changed.
 set -u
-# shellcheck source=../os.sh
+# shellcheck source=agents/os.sh
 . "$(dirname "${BASH_SOURCE[0]}")/../os.sh"
 
 # Windows (ADR 27): hermes there accepts the mounted folder as its home, so nothing is copied.
