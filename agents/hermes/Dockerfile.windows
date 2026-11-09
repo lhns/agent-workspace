@@ -20,6 +20,8 @@ RUN curl.exe -fsSL --retry 5 --retry-all-errors -o C:\install-hermes.ps1 `
 # Hermes' ffmpeg (voice features) needs Media Foundation, which Server Core lacks, and the install
 # fails when it can't run. Declare it unavailable on this target; the rest of hermes works.
 RUN powershell -NoProfile -NonInteractive -Command "$f = Join-Path $env:LOCALAPPDATA 'hermes\hermes-agent\pm\packages.py'; $t = [IO.File]::ReadAllText($f); $n = $t -replace '(?m)^(    gaps = \{target: .BtbN Linux builds link glibc dynamically.*)$', ('$1' + [char]10 + '    gaps = {**gaps, ''win32-x64'': ''Server Core has no Media Foundation''}'); if ($n -eq $t) { throw 'ffmpeg patch did not apply' }; [IO.File]::WriteAllText($f, $n, (New-Object Text.UTF8Encoding $false))"
+# Hermes deletes bytecode at its first launch of a checkout, so the last steps launch it once, then
+# compile. In the same layer: a separate step failed to activate this layer on the CI runners.
 RUN powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\install-hermes.ps1 `
         -NonInteractive -Stage venv -Branch main -Commit %HERMES_COMMIT% -SkipBrowser -SkipComputerUse `
     && powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\install-hermes.ps1 `
@@ -28,11 +30,10 @@ RUN powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\insta
         -NonInteractive -Stage products -Branch main -Commit %HERMES_COMMIT% -SkipBrowser -SkipComputerUse `
     && powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\install-hermes.ps1 `
         -NonInteractive -Stage config -Branch main -Commit %HERMES_COMMIT% -SkipBrowser -SkipComputerUse `
-    && del C:\install-hermes.ps1
-ENV PATH="$AGENTS_HOME\AppData\Local\hermes\bin;${PATH}"
-# Hermes deletes bytecode at its first launch of a checkout, so launch once, then compile.
-RUN hermes --help > NUL `
-    && powershell -NoProfile -NonInteractive -Command "& (Get-ChildItem $env:LOCALAPPDATA\hermes\tools\python-*\python.exe | Select-Object -First 1).FullName -m compileall -q -j0 -x node_modules $env:LOCALAPPDATA\hermes\hermes-agent | Out-Null; exit 0"
+    && del C:\install-hermes.ps1 `
+    && "%LOCALAPPDATA%\hermesin\hermes.exe" --help > NUL `
+    && powershell -NoProfile -NonInteractive -Command "& (Get-ChildItem $env:LOCALAPPDATA\hermes	ools\python-*\python.exe | Select-Object -First 1).FullName -m compileall -q -j0 -x node_modules $env:LOCALAPPDATA\hermes\hermes-agent | Out-Null; exit 0"
+ENV PATH="$AGENTS_HOME\AppData\Local\hermesin;${PATH}"
 # The state folder (agents/hermes/config) is mounted here at run time, as a profile of the
 # hermes root above, so hermes finds its code and dependency environments in the image and
 # keeps only state in the mount. Set last: the installer above needs the root as the home.
