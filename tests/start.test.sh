@@ -158,7 +158,7 @@ if [ "$1" = auth ]; then
     printf '{"version":1,"lastUsedProvider":"anthropic","modes":{},"providers":{"anthropic":{"settings":{"provider":"anthropic","apiKey":"%s","model":"%s"}}}}' "$4" "$6" >"$f"
     exit 0
 fi
-echo "STUB cline $*"
+echo "STUB cline $* ${CLINE_KEY:-}${CLINE_URL:-}${CLINE_MODEL:-}" # prepare() must not leave these set
 STUB
 chmod +x "$cstub/cline"
 cenv() { # VAR=value...: starts cline fresh with those variables and no other ANTHROPIC_* ones
@@ -173,6 +173,7 @@ check "cline provider: fresh runs auth with the default model" "$(cat "$HOME/cli
 check "cline provider: baseUrl gets /v1, one slash" "$(cfield .providers.anthropic.settings.baseUrl)" "http://gw.test/v1"
 check "cline provider: the key stays out of the output" "$out" "sk-fake-1" no
 check "cline provider: cline still starts" "$out" "STUB cline"
+check "cline provider: prepare leaves no variables in cline's environment" "$out" "http://gw.test" no
 rm -f "$cprov"
 cenv ANTHROPIC_AUTH_TOKEN=sk-fake-2 ANTHROPIC_MODEL=my-model >/dev/null
 check "cline provider: the auth token and ANTHROPIC_MODEL are used" "$(cat "$HOME/cline-auth.log")" "auth -p anthropic -k sk-fake-2 -m my-model"
@@ -183,7 +184,9 @@ cenv ANTHROPIC_API_KEY=sk-fake-3 ANTHROPIC_BASE_URL=http://gw2.test >/dev/null
 check "cline provider: existing entry, no auth call" "$(cat "$HOME/cline-auth.log" 2>/dev/null)" "auth" no
 check "cline provider: key synced" "$(cfield .providers.anthropic.settings.apiKey)" "sk-fake-3"
 check "cline provider: URL synced" "$(cfield .providers.anthropic.settings.baseUrl)" "http://gw2.test/v1"
-check "cline provider: the model the user picked stays" "$(cfield .providers.anthropic.settings.model)" "picked"
+check "cline provider: the model the user picked stays while ANTHROPIC_MODEL is unset" "$(cfield .providers.anthropic.settings.model)" "picked"
+cenv ANTHROPIC_API_KEY=sk-fake-3 ANTHROPIC_MODEL=env-model >/dev/null
+check "cline provider: ANTHROPIC_MODEL overwrites the stored model" "$(cfield .providers.anthropic.settings.model)" "env-model"
 cenv ANTHROPIC_API_KEY=sk-fake-3 >/dev/null
 check "cline provider: baseUrl removed when the URL is unset" "$(cfield '.providers.anthropic.settings | has("baseUrl")')" "false"
 # Another provider chosen in cline: untouched.
