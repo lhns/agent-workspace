@@ -146,6 +146,58 @@ db "$cl" "INSERT INTO sessions VALUES ('old', '$nwork', 0, NULL, '2020-01-01', '
 out=$(plain cline ask);                  check "cline: resumes the newest session of this folder that has messages" "$out" "STUB cline --id old"
 out=$(pty "$DOWN$ENTER" cline);          tcheck "cline: picker" "$out" "STUB cline history"
 
+# cline prepare(): the anthropic provider from the environment. The stub's `auth` records its
+# arguments and writes a providers.json like the real one (cline 3).
+cstub=$(mktemp -d)
+cat >"$cstub/cline" <<'STUB'
+#!/bin/sh
+f=$HOME/.cline/data/settings/providers.json
+if [ "$1" = auth ]; then
+    echo "$*" >>"$HOME/cline-auth.log"
+    mkdir -p "$(dirname "$f")"
+    printf '{"version":1,"lastUsedProvider":"anthropic","modes":{},"providers":{"anthropic":{"settings":{"provider":"anthropic","apiKey":"%s","model":"%s"}}}}' "$4" "$6" >"$f"
+    exit 0
+fi
+echo "STUB cline $*"
+STUB
+chmod +x "$cstub/cline"
+cenv() { # VAR=value...: starts cline fresh with those variables and no other ANTHROPIC_* ones
+    rm -f "$HOME/cline-auth.log"
+    env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_MODEL PATH="$cstub:$PATH" "$@" AGENTS_AUTORESUME=no bash "$start" cline </dev/null 2>&1
+}
+cprov="$HOME/.cline/data/settings/providers.json"
+cfield() { jq -r "$1" "$cprov"; }
+rm -f "$cprov"
+out=$(cenv ANTHROPIC_API_KEY=sk-fake-1 ANTHROPIC_BASE_URL=http://gw.test/)
+check "cline provider: fresh runs auth with the default model" "$(cat "$HOME/cline-auth.log")" "auth -p anthropic -k sk-fake-1 -m claude-sonnet-5-5"
+check "cline provider: baseUrl gets /v1, one slash" "$(cfield .providers.anthropic.settings.baseUrl)" "http://gw.test/v1"
+check "cline provider: the key stays out of the output" "$out" "sk-fake-1" no
+check "cline provider: cline still starts" "$out" "STUB cline"
+rm -f "$cprov"
+cenv ANTHROPIC_AUTH_TOKEN=sk-fake-2 ANTHROPIC_MODEL=my-model >/dev/null
+check "cline provider: the auth token and ANTHROPIC_MODEL are used" "$(cat "$HOME/cline-auth.log")" "auth -p anthropic -k sk-fake-2 -m my-model"
+check "cline provider: no URL, no baseUrl" "$(cfield '.providers.anthropic.settings | has("baseUrl")')" "false"
+# An entry exists: no auth, key and URL follow the environment, the model stays.
+jq '.providers.anthropic.settings.model = "picked"' "$cprov" >"$cprov.t" && mv "$cprov.t" "$cprov"
+cenv ANTHROPIC_API_KEY=sk-fake-3 ANTHROPIC_BASE_URL=http://gw2.test >/dev/null
+check "cline provider: existing entry, no auth call" "$(cat "$HOME/cline-auth.log" 2>/dev/null)" "auth" no
+check "cline provider: key synced" "$(cfield .providers.anthropic.settings.apiKey)" "sk-fake-3"
+check "cline provider: URL synced" "$(cfield .providers.anthropic.settings.baseUrl)" "http://gw2.test/v1"
+check "cline provider: the model the user picked stays" "$(cfield .providers.anthropic.settings.model)" "picked"
+cenv ANTHROPIC_API_KEY=sk-fake-3 >/dev/null
+check "cline provider: baseUrl removed when the URL is unset" "$(cfield '.providers.anthropic.settings | has("baseUrl")')" "false"
+# Another provider chosen in cline: untouched.
+echo '{"version":1,"lastUsedProvider":"openai","providers":{"openai":{"settings":{"provider":"openai"}}}}' >"$cprov"
+before=$(cat "$cprov")
+cenv ANTHROPIC_API_KEY=sk-fake-4 ANTHROPIC_BASE_URL=http://gw.test >/dev/null
+check "cline provider: another provider is left alone" "$(cat "$cprov")" "$before"
+check "cline provider: another provider, no auth call" "$(cat "$HOME/cline-auth.log" 2>/dev/null)" "auth" no
+# No key: nothing.
+rm -f "$cprov"
+cenv ANTHROPIC_BASE_URL=http://gw.test >/dev/null
+check "cline provider: no key, no auth call" "$(cat "$HOME/cline-auth.log" 2>/dev/null)" "auth" no
+check "cline provider: no key, no file" "$(test -e "$cprov" && echo exists)" "exists" no
+
 hm=$HOME/.hermes/state.db
 db "$hm" "CREATE TABLE sessions (source TEXT, message_count INTEGER, git_repo_root TEXT, cwd TEXT)" \
     "INSERT INTO sessions VALUES ('cli', 3, NULL, '/elsewhere')" "INSERT INTO sessions VALUES ('cli', 0, NULL, '$nwork')" "INSERT INTO sessions VALUES ('cron', 3, NULL, '$nwork')"

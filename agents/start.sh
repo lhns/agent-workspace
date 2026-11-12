@@ -78,6 +78,10 @@ launch_cmd() {
 # shellcheck source=agents/claude/harness.sh
 . "$AGENTS_DIR/agents/$h/harness.sh"
 
+# Optional prepare(): sets up the harness's config from the environment before it starts (cline).
+# Not for launch.sh, which only sources harness.sh.
+! declare -F prepare >/dev/null || prepare
+
 launch=${AGENTS_LAUNCH_DIR:-$AGENTS_DIR/launch/${AGENTS_RUN_ID:-none}}
 args=()
 mode=${AGENTS_AUTORESUME:-}
