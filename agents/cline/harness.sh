@@ -7,33 +7,45 @@ picker=(cline history)
 # Where the harness reads global instructions; start.sh writes the generated file there.
 instructions="$HOME/.agents/AGENTS.md"
 
-# cline reads no API settings from the environment. On start, make its anthropic provider from
-# ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN), ANTHROPIC_BASE_URL and ANTHROPIC_MODEL; .env stays the
-# source of truth: a set variable overwrites the stored value on every start, an unset model keeps the
-# stored one. A provider picked in cline is left alone (a Cline account login counts as none).
+# cline reads no API settings from the environment. On start, make its provider from the environment:
+# anthropic from ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN), ANTHROPIC_BASE_URL and ANTHROPIC_MODEL, else
+# openai-compatible from OPENAI_API_KEY, OPENAI_BASE_URL (default https://api.openai.com/v1) and
+# OPENAI_MODEL. A first setup without a model uses cline's default for the provider. .env stays the source
+# of truth: a set variable overwrites the stored value on every start, an unset model keeps the stored one.
+# A provider picked in cline is left alone (a Cline account login counts as none).
 # The file is only created by `cline auth` (a hand-written one is reset); jq patches it afterwards.
 prepare() {
-    local file="$HOME/.cline/data/settings/providers.json" key=${ANTHROPIC_API_KEY:-${ANTHROPIC_AUTH_TOKEN:-}} url="" tmp last
-    [ -n "$key" ] || return 0
-    # cline's baseUrl includes /v1; ANTHROPIC_BASE_URL (Claude Code) does not.
-    [ -z "${ANTHROPIC_BASE_URL:-}" ] || url="${ANTHROPIC_BASE_URL%/}/v1"
-    if ! jq -e '.providers.anthropic' "$file" >/dev/null 2>&1; then
-        last=$(jq -r '.lastUsedProvider // "cline"' "$file" 2>/dev/null || echo cline)
-        [ "$last" = cline ] || return 0
-        cline auth -p anthropic -k "$key" -m "${ANTHROPIC_MODEL:-claude-sonnet-5-5}" >/dev/null 2>&1 \
-            || { echo "cline: could not set up the anthropic provider from the environment." >&2; return 0; }
+    local file="$HOME/.cline/data/settings/providers.json" id auth default key url model tmp last
+    if [ -n "${ANTHROPIC_API_KEY:-${ANTHROPIC_AUTH_TOKEN:-}}" ]; then
+        id=anthropic auth=anthropic default=claude-sonnet-5-5 model=${ANTHROPIC_MODEL:-} url=""
+        key=${ANTHROPIC_API_KEY:-$ANTHROPIC_AUTH_TOKEN}
+        # cline's baseUrl includes /v1; ANTHROPIC_BASE_URL (Claude Code) does not.
+        [ -z "${ANTHROPIC_BASE_URL:-}" ] || url="${ANTHROPIC_BASE_URL%/}/v1"
+    elif [ -n "${OPENAI_API_KEY:-}" ]; then
+        # `cline auth -p openai` makes the openai-compatible provider; OPENAI_BASE_URL includes /v1 already.
+        id=openai-compatible auth=openai default=gpt-4o model=${OPENAI_MODEL:-} key=$OPENAI_API_KEY
+        url=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+    else
+        return 0
+    fi
+    last=$(jq -r '.lastUsedProvider // "cline"' "$file" 2>/dev/null || echo cline)
+    case $last in cline | anthropic | openai-compatible) ;; *) return 0 ;; esac
+    if ! CLINE_ID=$id jq -e '.providers[env.CLINE_ID]' "$file" >/dev/null 2>&1; then
+        cline auth -p "$auth" -k "$key" -m "${model:-$default}" >/dev/null 2>&1 \
+            || { echo "cline: could not set up the $id provider from the environment." >&2; return 0; }
     fi
     tmp=$(mktemp "$file.XXXXXX") || return 0
     # The values reach jq through its environment only, not its arguments (visible in ps).
-    if CLINE_KEY=$key CLINE_URL=$url CLINE_MODEL=${ANTHROPIC_MODEL:-} jq \
-        '.providers.anthropic.settings |= (.apiKey = env.CLINE_KEY
+    if CLINE_ID=$id CLINE_KEY=$key CLINE_URL=$url CLINE_MODEL=$model jq \
+        '.lastUsedProvider = env.CLINE_ID
+        | .providers[env.CLINE_ID].settings |= (.apiKey = env.CLINE_KEY
             | if env.CLINE_URL == "" then del(.baseUrl) else .baseUrl = env.CLINE_URL end
             | if env.CLINE_MODEL == "" then . else .model = env.CLINE_MODEL end)' "$file" >"$tmp" 2>/dev/null \
         && mv -f "$tmp" "$file"; then
         return 0
     fi
     rm -f "$tmp"
-    echo "cline: could not update the anthropic provider from the environment." >&2
+    echo "cline: could not update the $id provider from the environment." >&2
 }
 
 # Uses sql() from start.sh. No continue flag; the session index records each session's folder.
