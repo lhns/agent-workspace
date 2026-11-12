@@ -10,6 +10,9 @@ picker=(claude --resume)
 # Where the harness reads global instructions; start.sh writes the generated file there.
 instructions="$HOME/.claude/CLAUDE.md"
 
+# Optional: prepare() runs in the harness container (start.sh only, not launch.sh) before the harness
+# starts, also with --exec. Use it to derive the harness's config from the environment; see cline.
+
 # Sets `resume` (the command) when there is a conversation for $PWD, else returns 1.
 # A harness's own "continue" fails or falls back to another folder's session when there is none.
 find_session() {

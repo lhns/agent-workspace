@@ -7,6 +7,35 @@ picker=(cline history)
 # Where the harness reads global instructions; start.sh writes the generated file there.
 instructions="$HOME/.agents/AGENTS.md"
 
+# cline reads no API settings from the environment. On start, make its anthropic provider from
+# ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN), ANTHROPIC_BASE_URL and ANTHROPIC_MODEL; .env stays the
+# source of truth: a set variable overwrites the stored value on every start, an unset model keeps the
+# stored one. A provider picked in cline is left alone (a Cline account login counts as none).
+# The file is only created by `cline auth` (a hand-written one is reset); jq patches it afterwards.
+prepare() {
+    local file="$HOME/.cline/data/settings/providers.json" key=${ANTHROPIC_API_KEY:-${ANTHROPIC_AUTH_TOKEN:-}} url="" tmp last
+    [ -n "$key" ] || return 0
+    # cline's baseUrl includes /v1; ANTHROPIC_BASE_URL (Claude Code) does not.
+    [ -z "${ANTHROPIC_BASE_URL:-}" ] || url="${ANTHROPIC_BASE_URL%/}/v1"
+    if ! jq -e '.providers.anthropic' "$file" >/dev/null 2>&1; then
+        last=$(jq -r '.lastUsedProvider // "cline"' "$file" 2>/dev/null || echo cline)
+        [ "$last" = cline ] || return 0
+        cline auth -p anthropic -k "$key" -m "${ANTHROPIC_MODEL:-claude-sonnet-5-5}" >/dev/null 2>&1 \
+            || { echo "cline: could not set up the anthropic provider from the environment." >&2; return 0; }
+    fi
+    tmp=$(mktemp "$file.XXXXXX") || return 0
+    # The values reach jq through its environment only, not its arguments (visible in ps).
+    if CLINE_KEY=$key CLINE_URL=$url CLINE_MODEL=${ANTHROPIC_MODEL:-} jq \
+        '.providers.anthropic.settings |= (.apiKey = env.CLINE_KEY
+            | if env.CLINE_URL == "" then del(.baseUrl) else .baseUrl = env.CLINE_URL end
+            | if env.CLINE_MODEL == "" then . else .model = env.CLINE_MODEL end)' "$file" >"$tmp" 2>/dev/null \
+        && mv -f "$tmp" "$file"; then
+        return 0
+    fi
+    rm -f "$tmp"
+    echo "cline: could not update the anthropic provider from the environment." >&2
+}
+
 # Uses sql() from start.sh. No continue flag; the session index records each session's folder.
 # A session counts once it has written messages (every launch adds a row).
 find_session() {
