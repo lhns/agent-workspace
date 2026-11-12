@@ -5,8 +5,8 @@ FROM agent-workspace-base-windows
 # (%LOCALAPPDATA%\hermes: code, tools, dependency environments) and puts the command in
 # %LOCALAPPDATA%\hermes\bin.
 # renovate: datasource=github-tags depName=NousResearch/hermes-agent
-ARG HERMES_VERSION=v0.23.0
-ARG HERMES_COMMIT=2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19
+ARG HERMES_VERSION=v0.23.1
+ARG HERMES_COMMIT=3b421578588243f920886e6fe79a6faa87ea026e
 # Its dependency environments have paths past MAX_PATH.
 RUN reg add HKLM\SYSTEM\CurrentControlSet\Control\FileSystem /v LongPathsEnabled /t REG_DWORD /d 1 /f
 # Download first, so a failed download (e.g. HTTP 429) can't build an empty image. The installer
