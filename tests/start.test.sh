@@ -155,15 +155,25 @@ f=$HOME/.cline/data/settings/providers.json
 if [ "$1" = auth ]; then
     echo "$*" >>"$HOME/cline-auth.log"
     mkdir -p "$(dirname "$f")"
-    printf '{"version":1,"lastUsedProvider":"anthropic","modes":{},"providers":{"anthropic":{"settings":{"provider":"anthropic","apiKey":"%s","model":"%s"}}}}' "$4" "$6" >"$f"
+    shift
+    while [ $# -gt 1 ]; do
+        case $1 in -p) p=$2 ;; -k) k=$2 ;; -m) m=$2 ;; esac
+        shift 2
+    done
+    [ "$p" = openai ] && p=openai-compatible # like cline's alias
+    [ -s "$f" ] || echo '{"version":1,"modes":{},"providers":{}}' >"$f"
+    jq --arg p "$p" --arg k "$k" --arg m "$m" \
+        '.lastUsedProvider = $p | .providers[$p] = {settings: {provider: $p, apiKey: $k, model: $m}}' "$f" >"$f.n" \
+        && mv "$f.n" "$f"
     exit 0
 fi
-echo "STUB cline $* ${CLINE_KEY:-}${CLINE_URL:-}${CLINE_MODEL:-}" # prepare() must not leave these set
+echo "STUB cline $* ${CLINE_ID:-}${CLINE_KEY:-}${CLINE_URL:-}${CLINE_MODEL:-}" # prepare() must not leave these set
 STUB
 chmod +x "$cstub/cline"
-cenv() { # VAR=value...: starts cline fresh with those variables and no other ANTHROPIC_* ones
+cenv() { # VAR=value...: starts cline fresh with those variables and no other ANTHROPIC_*/OPENAI_* ones
     rm -f "$HOME/cline-auth.log"
-    env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_MODEL PATH="$cstub:$PATH" "$@" AGENTS_AUTORESUME=no bash "$start" cline </dev/null 2>&1
+    env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_MODEL \
+        -u OPENAI_API_KEY -u OPENAI_BASE_URL -u OPENAI_MODEL PATH="$cstub:$PATH" "$@" AGENTS_AUTORESUME=no bash "$start" cline </dev/null 2>&1
 }
 cprov="$HOME/.cline/data/settings/providers.json"
 cfield() { jq -r "$1" "$cprov"; }
@@ -197,9 +207,52 @@ check "cline provider: another provider is left alone" "$(cat "$cprov")" "$befor
 check "cline provider: another provider, no auth call" "$(cat "$HOME/cline-auth.log" 2>/dev/null)" "auth" no
 # No key: nothing.
 rm -f "$cprov"
-cenv ANTHROPIC_BASE_URL=http://gw.test >/dev/null
+cenv ANTHROPIC_BASE_URL=http://gw.test OPENAI_BASE_URL=http://gw.test/v1 OPENAI_MODEL=m >/dev/null
 check "cline provider: no key, no auth call" "$(cat "$HOME/cline-auth.log" 2>/dev/null)" "auth" no
 check "cline provider: no key, no file" "$(test -e "$cprov" && echo exists)" "exists" no
+
+# OpenAI: openai-compatible; OPENAI_BASE_URL is used as is, api.openai.com when unset.
+op='.providers["openai-compatible"].settings'
+out=$(cenv OPENAI_API_KEY=sk-oai-1 OPENAI_BASE_URL=http://oai.test/v1/)
+check "cline openai: fresh runs auth with the default model" "$(cat "$HOME/cline-auth.log")" "auth -p openai -k sk-oai-1 -m gpt-4o"
+check "cline openai: baseUrl as is" "$(cfield "$op.baseUrl")" "http://oai.test/v1/"
+check "cline openai: selected" "$(cfield .lastUsedProvider)" "openai-compatible"
+check "cline openai: the key stays out of the output" "$out" "sk-oai-1" no
+check "cline openai: cline still starts" "$out" "STUB cline"
+check "cline openai: prepare leaves no variables in cline's environment" "$out" "oai.test" no
+rm -f "$cprov"
+cenv OPENAI_API_KEY=sk-oai-2 OPENAI_MODEL=my-gpt >/dev/null
+check "cline openai: OPENAI_MODEL is used" "$(cat "$HOME/cline-auth.log")" "auth -p openai -k sk-oai-2 -m my-gpt"
+check "cline openai: default URL" "$(cfield "$op.baseUrl")" "https://api.openai.com/v1"
+check "cline openai: model" "$(cfield "$op.model")" "my-gpt"
+# The stored model stays while OPENAI_MODEL is unset; key and URL follow.
+jq "$op.model = \"picked\"" "$cprov" >"$cprov.t" && mv "$cprov.t" "$cprov"
+cenv OPENAI_API_KEY=sk-oai-3 OPENAI_BASE_URL=http://oai2.test/v1 >/dev/null
+check "cline openai: existing entry, no auth call" "$(cat "$HOME/cline-auth.log" 2>/dev/null)" "auth" no
+check "cline openai: key synced" "$(cfield "$op.apiKey")" "sk-oai-3"
+check "cline openai: URL synced" "$(cfield "$op.baseUrl")" "http://oai2.test/v1"
+check "cline openai: the picked model stays" "$(cfield "$op.model")" "picked"
+# Both keys: Anthropic wins.
+rm -f "$cprov"
+cenv OPENAI_API_KEY=sk-oai-4 ANTHROPIC_API_KEY=sk-fake-5 >/dev/null
+check "cline both: anthropic wins" "$(cat "$HOME/cline-auth.log")" "auth -p anthropic -k sk-fake-5"
+check "cline both: anthropic selected" "$(cfield .lastUsedProvider)" "anthropic"
+# .env switched from Anthropic to OpenAI (and back): the entry is created or selected, both stay.
+cenv OPENAI_API_KEY=sk-oai-6 OPENAI_MODEL=gpt-x >/dev/null
+check "cline switch: openai selected" "$(cfield .lastUsedProvider)" "openai-compatible"
+check "cline switch: openai entry made" "$(cfield "$op.apiKey")" "sk-oai-6"
+check "cline switch: anthropic entry kept" "$(cfield .providers.anthropic.settings.apiKey)" "sk-fake-5"
+cenv ANTHROPIC_API_KEY=sk-fake-7 >/dev/null
+check "cline switch: back to anthropic, no auth call" "$(cat "$HOME/cline-auth.log" 2>/dev/null)" "auth" no
+check "cline switch: anthropic selected" "$(cfield .lastUsedProvider)" "anthropic"
+check "cline switch: anthropic key synced" "$(cfield .providers.anthropic.settings.apiKey)" "sk-fake-7"
+check "cline switch: openai entry kept" "$(cfield "$op.apiKey")" "sk-oai-6"
+# Another provider chosen in cline: untouched.
+echo '{"version":1,"lastUsedProvider":"openrouter","providers":{"openrouter":{"settings":{"provider":"openrouter"}}}}' >"$cprov"
+before=$(cat "$cprov")
+cenv OPENAI_API_KEY=sk-oai-8 >/dev/null
+check "cline openai: another provider is left alone" "$(cat "$cprov")" "$before"
+check "cline openai: another provider, no auth call" "$(cat "$HOME/cline-auth.log" 2>/dev/null)" "auth" no
 
 hm=$HOME/.hermes/state.db
 db "$hm" "CREATE TABLE sessions (source TEXT, message_count INTEGER, git_repo_root TEXT, cwd TEXT)" \
