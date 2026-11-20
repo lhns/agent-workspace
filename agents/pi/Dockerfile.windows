@@ -1,7 +1,7 @@
 # escape=`
 FROM agent-workspace-base-windows
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
-ARG PI_VERSION=1.5.0
+ARG PI_VERSION=1.5.2
 # The cache goes outside ~/.cache (a volume target stays empty) and is dropped again.
 RUN npm install -g --ignore-scripts --cache C:\npm-cache @earendil-works/pi-coding-agent@%PI_VERSION% && rmdir /s /q C:\npm-cache
 # The image pins the version (Renovate); this only silences the update notice.
