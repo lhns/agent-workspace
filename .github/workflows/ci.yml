@@ -331,10 +331,18 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The daemon was once not ready when the job started.
+      # The daemon is either up within a minute or never: on some runners the service doesn't start.
+      # Then start it ourselves (again after two more minutes) and show the service's state.
       - name: Wait for the Docker daemon
         run: |
-          for _ in $(seq 1 60); do docker version > /dev/null 2>&1 && break; sleep 5; done
+          for i in $(seq 1 60); do
+            docker version > /dev/null 2>&1 && break
+            if [ "$i" = 12 ] || [ "$i" = 36 ]; then
+              echo "Docker daemon not up after $((i * 5)) s, (re)starting the service"
+              powershell -NoProfile -Command 'Get-Service docker | Format-List Name,Status,StartType; Restart-Service docker -Force' || true
+            fi
+            sleep 5
+          done
           docker version
           docker info -f 'OSType={{.OSType}} Isolation={{.Isolation}} OSVersion={{.OSVersion}}'
           docker compose version
