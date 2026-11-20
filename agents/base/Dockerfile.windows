@@ -12,7 +12,7 @@ LABEL org.opencontainers.image.source=https://github.com/lhns/agent-workspace `
 # same major as the Linux image. The hashes of PortableGit and Python are pinned here: update them
 # with the version (sha256 of the file install.ps1 names; python.org publishes none).
 # renovate: datasource=node-version depName=node
-ARG NODE_VERSION=24.22.2
+ARG NODE_VERSION=24.22.3
 # renovate: datasource=github-releases depName=git-for-windows/git versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)\.windows\.(?<build>\d+)$
 ARG GIT_VERSION=v2.56.0.windows.4
 ARG GIT_SHA256=b1f3e52216e2ed6882d1bebfd4d3fdf319bec40d2edbbf9fd26ec4fd3fce7ed1
