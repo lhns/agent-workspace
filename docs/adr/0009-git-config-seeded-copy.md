@@ -1,6 +1,6 @@
 # 9. Git config: seeded copy, mounted read-write
 
-Status: Accepted
+Status: Accepted; refined by ADR 28
 
 ## Context
 Agents commit, so they need the user's git identity and settings. Mounting the host config read-only stops changing settings inside the container. Mounting it read-write lets a container change the host's config. A host config can also contain host-only entries, such as Windows paths to credential helpers and editors.

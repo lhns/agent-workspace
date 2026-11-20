@@ -474,4 +474,53 @@ printf '%s\0' true >"$ld3/args"
 rm -f "$notes"
 AGENTS_LAUNCH_DIR=$ld3 AGENTS_USER_INSTRUCTIONS=$user.orig bash "$start" claude </dev/null >/dev/null 2>&1
 check "notes: --exec writes them too" "$(cat "$notes")" "MY RULES"
+
+# Host-only git settings are removed from the copied config at every start (ADR 28), also before --exec.
+unset XDG_CONFIG_HOME
+gcfg=$HOME/.config/git/config
+mkdir -p "$HOME/.config/git"
+cat > "$gcfg" <<'CFG'
+[user]
+	name = Test User
+[http]
+	sslBackend = schannel
+	schannelCheckRevoke = false
+	sslVerify = true
+[credential]
+	helper = manager
+	helper = store
+[credential "helperselector"]
+	selected = manager
+[credential "https://git.example.com"]
+	helper = manager-core
+	helper = cache
+[credential "https://other.example.com"]
+	helper = osxkeychain
+[credential "https://x.example.com"]
+	helper = wincred
+CFG
+plain claude no >/dev/null
+check "git: sslBackend is removed" "$(git config -f "$gcfg" --get-regexp '^http\.' | sort | paste -sd' ')" "http.sslverify true"
+check "git: the schannel keys are removed" "$(git config -f "$gcfg" --list)" "schannel" no
+check "git: the helper selector is removed" "$(git config -f "$gcfg" --list)" "helperselector" no
+check "git: host-only helpers are removed" "$(git config -f "$gcfg" --get-regexp 'helper$' | sort | paste -sd' ')" "credential.helper store credential.https://git.example.com.helper cache"
+check "git: other settings stay" "$(git config -f "$gcfg" user.name)" "Test User"
+cp "$gcfg" "$gcfg.once"
+plain claude no >/dev/null
+check "git: a second start changes nothing" "$(cmp "$gcfg" "$gcfg.once" && echo same)" "same"
+# A config with none of them, no config at all and an unreadable one never fail the start.
+printf '[user]\n\tname = Test User\n' > "$gcfg"
+out=$(plain claude no); check "git: nothing to remove, no message" "$out" "start.sh:" no
+rm -f "$gcfg"
+out=$(plain claude no); check "git: no config file, no message" "$out" "start.sh:" no
+printf '[http\n\tsslBackend = schannel\n' > "$gcfg"
+out=$(plain claude no); check "git: a broken config still starts the harness" "$out" "STUB claude"
+rm -f "$gcfg"
+printf '[http]\n\tsslBackend = schannel\n' > "$gcfg"
+ld4=$(mktemp -d)
+printf '%s\0' git config --get http.sslBackend >"$ld4/args"
+: >"$ld4/exec"
+out=$(AGENTS_LAUNCH_DIR=$ld4 bash "$start" claude </dev/null 2>&1)
+check "git: --exec git sees the cleaned config" "$out" "schannel" no
+check "git: --exec: the file is cleaned" "$(cat "$gcfg")" "schannel" no
 exit $fail

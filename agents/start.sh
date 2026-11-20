@@ -51,6 +51,26 @@ write_instructions() {
     rm -f "$tmp"
 }
 
+# Removes host-only git settings from the copied config (ADR 28): another TLS backend (schannel), host
+# credential helpers (GCM, wincred, osxkeychain) and their selector state mean nothing here and break
+# git. Idempotent.
+strip_host_git() {
+    local cfg=${XDG_CONFIG_HOME:-$HOME/.config}/git/config
+    { [ -f "$cfg" ] && command -v git >/dev/null; } || return 0
+    unset_keys "$cfg" '^(http\.(sslbackend|schannelcheckrevoke|schannelusesslcainfo)|credential\.helperselector\..*)$' &&
+        unset_keys "$cfg" '^credential\.(.*\.)?helper$' '^(manager|manager-core|wincred|osxkeychain)$'
+}
+# unset_keys FILE KEY-REGEX [VALUE-REGEX]: removes the matching entries. Only listed keys are unset,
+# because `git config --unset-all` exits 5 on a key that isn't there (--get-regexp exits 1: no match).
+unset_keys() {
+    local cfg=$1 keys rc=0 k
+    keys=$(git config -f "$cfg" --name-only --get-regexp "${@:2}") || rc=$?
+    [ "$rc" -le 1 ] || return 1
+    while IFS= read -r k; do
+        [ -z "$k" ] || git config -f "$cfg" --unset-all "$k" ${3:+"$3"} || return 1
+    done < <(sort -u <<<"$keys")
+}
+
 # Starts the command in place of this script. With a Docker session it runs as a child instead, so the
 # session and this container's key can be ended after it; SIGTERM (docker stop) is passed on.
 launch_cmd() {
@@ -60,6 +80,7 @@ launch_cmd() {
     trap - TERM HUP INT
     # Made here, not in the image: a Windows volume can only be mounted on an empty directory.
     mkdir -p "$HOME/.cache/bin" 2>/dev/null || true
+    strip_host_git 2>/dev/null || echo "start.sh: could not remove host-only settings from the git config" >&2
     write_instructions
     [ -n "$docker_active" ] || exec "$@"
     "$@" <&0 &
