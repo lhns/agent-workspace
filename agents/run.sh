@@ -139,6 +139,26 @@ if [ ! -e shared/git/config ]; then
     for src in "$HOME/.gitconfig" "${XDG_CONFIG_HOME:-$HOME/.config}/git/config"; do
         if [ -f "$src" ]; then cp "$src" shared/git/config; break; fi
     done
+    # Git Bash on a Windows host (like run.bat): drop values with Windows paths (drive letter, not "https:/").
+    if [ "$(uname -o 2>/dev/null)" = Msys ] && command -v git >/dev/null; then
+        win='(^|[^A-Za-z])[A-Za-z]:[\/]'
+        git config -f shared/git/config --name-only --get-regexp . "$win" | sort -u | while IFS= read -r k; do
+            git config -f shared/git/config --unset-all "$k" "$win" || true
+        done
+    fi
+fi
+
+# AGENTS_GIT_CREDENTIALS=host: copy the login for the workspace's https origin from the host's own credential
+# helper into shared/git/credentials (ADR 28). Never prompts, prints nothing, writes nothing without a login.
+if [ "${AGENTS_GIT_CREDENTIALS:-$(envval AGENTS_GIT_CREDENTIALS)}" = host ] && command -v git >/dev/null; then
+    origin=$(git -C "${ws:-workspace}" remote get-url origin 2>/dev/null) || origin=
+    case $origin in
+        https://*)
+            printf 'url=%s\n\n' "$origin" |
+                GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_ASKPASS='' SSH_ASKPASS='' git credential fill 2>/dev/null |
+                git credential-store --file shared/git/credentials store 2>/dev/null || true
+            ;;
+    esac
 fi
 
 # The core (options, harness menu, last-harness) runs in the base image, with every argument

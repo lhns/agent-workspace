@@ -26,7 +26,7 @@ for /f "delims==" %%K in ('findstr /r /b "[A-Z_]*=" .env.example') do (
 rem Settings: a non-empty shell variable wins over .env, like compose's own interpolation.
 rem Prebuilt images come from ghcr.io unless AGENTS_LOCAL_BUILD is non-empty; they are <prefix>-<harness>:<hash>,
 rem the base image <prefix>-base:<hash>.
-for %%V in (WORKSPACE_DIR AGENTS_LOCAL_BUILD AGENTS_IMAGE_PREFIX AGENTS_PLATFORM) do if not defined %%V for /f "usebackq tokens=1,* delims==" %%A in (".env") do if "%%A"=="%%V" if not "%%B"=="" set "%%V=%%~B"
+for %%V in (WORKSPACE_DIR AGENTS_LOCAL_BUILD AGENTS_IMAGE_PREFIX AGENTS_PLATFORM AGENTS_GIT_CREDENTIALS) do if not defined %%V for /f "usebackq tokens=1,* delims==" %%A in (".env") do if "%%A"=="%%V" if not "%%B"=="" set "%%V=%%~B"
 if not defined AGENTS_IMAGE_PREFIX set "AGENTS_IMAGE_PREFIX=ghcr.io/lhns/agent-workspace"
 
 rem Linux or Windows containers: whatever the daemon runs, unless AGENTS_PLATFORM says otherwise.
@@ -76,6 +76,7 @@ if not exist shared\instructions\AGENTS.md (
 rem Leftovers of a killed launcher (Ctrl-C ends a batch file without cleanup).
 forfiles /p shared\.launch /d -1 /c "cmd /c if @isdir==TRUE rd /s /q @path" >nul 2>&1
 call :seedgit
+call :gitcreds
 
 rem The core (options, harness menu, last-harness) runs in the base image, ensured first, with
 rem every argument untouched.
@@ -142,6 +143,29 @@ if defined SRC (
 ) else (
     type nul > shared\git\config
 )
+exit /b 0
+
+rem :gitcreds  with AGENTS_GIT_CREDENTIALS=host, copies the login for the workspace's https origin from the host's own
+rem credential helper into shared\git\credentials (ADR 28). Never prompts, prints nothing, writes nothing without a login.
+rem cmd can't set a variable to empty, so the askpass programs are a name that doesn't exist: git then can't prompt.
+:gitcreds
+if /i not "%AGENTS_GIT_CREDENTIALS%"=="host" exit /b 0
+setlocal
+set "ORIGIN="
+for /f "usebackq delims=" %%O in (`git -C "%WS_ABS%" remote get-url origin 2^>nul`) do set "ORIGIN=%%O"
+if not defined ORIGIN exit /b 0
+set "TF=%TEMP%\aw-cred-%RANDOM%.txt"
+setlocal enabledelayedexpansion
+if /i not "!ORIGIN:~0,8!"=="https://" exit /b 0
+>"%TF%" echo url=!ORIGIN!
+>>"%TF%" echo.
+endlocal
+set "GIT_TERMINAL_PROMPT=0"
+set "GCM_INTERACTIVE=never"
+set "GIT_ASKPASS=aw-no-askpass"
+set "SSH_ASKPASS=aw-no-askpass"
+git credential fill <"%TF%" 2>nul | git credential-store --file shared/git/credentials store 2>nul
+del "%TF%" 2>nul
 exit /b 0
 
 rem :ensure NAME FILE FILE FILE  (NAME is base or a harness; the files make up the image, empty ones are skipped)

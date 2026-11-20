@@ -310,6 +310,57 @@ try {
     (Get-Content "$work\.env") -notmatch '^AGENTS_PLATFORM=' | Set-Content "$work\.env"
     Remove-Item "$work\agents\*\.build*.sha256"
 
+    # AGENTS_GIT_CREDENTIALS=host (ADR 28): the login for the workspace's https origin is copied from the host's
+    # credential helper. Fake values only; the helper is a shell function of ours, nothing contacts a host.
+    $hostGit = "$work\hostgit"
+    $helper = '"!f() { test \"$1\" = get || return 0; cat >/dev/null; test -z \"$FAKE_NO_LOGIN\" || return 0; echo username=fake-user; echo password=${FAKE_PASSWORD:-fake-secret-1}; echo password_expiry_utc=1999999999; echo oauth_refresh_token=fake-refresh; }; f"'
+    Set-Content $hostGit "[credential]`n`thelper = $helper" -Encoding ascii
+    Set-Content "$work\askpass.cmd" '@echo asked>>"%ASKED_LOG%"' -Encoding ascii
+    $env:GIT_CONFIG_NOSYSTEM = '1'
+    $env:GIT_CONFIG_GLOBAL = $hostGit
+    $env:ASKED_LOG = "$work\asked.log"
+    $env:GIT_ASKPASS = "$work\askpass.cmd"
+    $env:SSH_ASKPASS = "$work\askpass.cmd"
+    foreach ($r in @(@('gws', 'https://git.example.com/org/repo.git'), @('sshws', 'git@git.example.com:org/repo.git'), @('nows', ''), @('plainws', $null))) {
+        $dir = "$work\$($r[0])"
+        New-Item -ItemType Directory $dir | Out-Null
+        if ($null -ne $r[1]) { git init -q $dir; if ($r[1]) { git -C $dir remote add origin $r[1] } }
+    }
+    $creds = "$work\shared\git\credentials"
+    $env:WORKSPACE_DIR = "$work\gws"
+    Remove-Item $creds -ErrorAction SilentlyContinue
+    Invoke-Launcher 'claude'
+    Check 'credentials: off by default, nothing is copied' ($code -eq 0 -and -not (Test-Path $creds))
+    $env:AGENTS_GIT_CREDENTIALS = 'host'
+    Invoke-Launcher 'claude'
+    Check 'credentials: host, the login is stored for the origin' ((Get-Content $creds) -eq 'https://fake-user:fake-secret-1@git.example.com')
+    Check 'credentials: nothing is printed' ($out -notmatch 'fake-')
+    $env:FAKE_PASSWORD = 'fake-secret-2'
+    Invoke-Launcher 'claude'
+    Remove-Item Env:FAKE_PASSWORD
+    Check 'credentials: the next launch replaces the entry' ((Get-Content $creds) -eq 'https://fake-user:fake-secret-2@git.example.com')
+    Remove-Item Env:AGENTS_GIT_CREDENTIALS
+    Remove-Item $creds
+    Add-Content "$work\.env" 'AGENTS_GIT_CREDENTIALS=host'
+    Invoke-Launcher 'claude'
+    Check 'credentials: the setting is read from .env' ((Test-Path $creds) -and (Get-Content $creds) -eq 'https://fake-user:fake-secret-1@git.example.com')
+    (Get-Content "$work\.env") -notmatch '^AGENTS_GIT_CREDENTIALS=' | Set-Content "$work\.env"
+    $env:AGENTS_GIT_CREDENTIALS = 'host'
+    foreach ($w in 'nows', 'sshws', 'plainws') {
+        Remove-Item $creds -ErrorAction SilentlyContinue
+        $env:WORKSPACE_DIR = "$work\$w"
+        Invoke-Launcher 'claude'
+        Check "credentials: $w (no https origin) copies nothing" ($code -eq 0 -and -not (Test-Path $creds))
+    }
+    $env:WORKSPACE_DIR = "$work\gws"
+    $env:FAKE_NO_LOGIN = '1'
+    Remove-Item "$work\asked.log" -ErrorAction SilentlyContinue
+    Invoke-Launcher 'claude'
+    Remove-Item Env:FAKE_NO_LOGIN
+    Check 'credentials: no login on the host writes nothing' ($code -eq 0 -and (-not (Test-Path $creds) -or (Get-Item $creds).Length -eq 0))
+    Check 'credentials: no login, no prompt and no askpass program' (-not (Test-Path "$work\asked.log") -and $out -notmatch 'fake-')
+    Remove-Item Env:AGENTS_GIT_CREDENTIALS, Env:WORKSPACE_DIR, Env:GIT_CONFIG_NOSYSTEM, Env:GIT_CONFIG_GLOBAL, Env:ASKED_LOG, Env:GIT_ASKPASS, Env:SSH_ASKPASS
+
     $env:STUB_NO_HARNESS = '1'
     Invoke-Launcher '--help'
     Remove-Item Env:STUB_NO_HARNESS

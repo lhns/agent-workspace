@@ -1,6 +1,6 @@
 # 10. Git credentials persisted in the shared git dir
 
-Status: Accepted
+Status: Accepted; refined by ADR 28
 
 ## Context
 Pushing and pulling private repos needs credentials. Passing them through from the host is unreliable. Windows Git Credential Manager and `gh.exe` can't run in a Linux container, and Docker Desktop on Windows doesn't forward an ssh-agent. A token in `.env` covers only one host.

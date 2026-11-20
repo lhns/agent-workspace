@@ -201,6 +201,85 @@ check "a shell AGENTS_PLATFORM beats .env" "$([ "$(env_of)" = 'linux||||' ]; ech
 grep -v '^AGENTS_PLATFORM=' .env > .env.tmp; mv .env.tmp .env
 rm -f agents/*/.build*.sha256
 
+# Git (ADR 28): seeding on a Windows host (Git Bash) and the opt-in copy of the host's login. Fake values
+# only; the "host's credential helper" is a script of ours, nothing contacts a host.
+REAL_UNAME=$(command -v uname); export REAL_UNAME
+cat > stub/uname <<'STUB'
+#!/bin/sh
+if [ "${1:-}" = -o ] && [ -n "${STUB_UNAME:-}" ]; then echo "$STUB_UNAME"; exit 0; fi
+exec "$REAL_UNAME" "$@"
+STUB
+chmod +x stub/uname
+export HOME=$work/home GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=$work/hostgit
+unset XDG_CONFIG_HOME STUB_UNAME AGENTS_GIT_CREDENTIALS
+mkdir -p "$HOME"
+printf '[core]\n\teditor = "C:/Program Files/Editor/ed.exe"\n[url "https://git.example.com/"]\n\tinsteadOf = ex:\n[http]\n\tsslBackend = schannel\n' > "$HOME/.gitconfig"
+rm -rf shared/git; run claude
+check "seed on a Linux host: copied as is" "$([ "$(cat shared/git/config)" = "$(cat "$HOME/.gitconfig")" ]; echo $?)"
+rm -rf shared/git; STUB_UNAME=Msys run claude
+check "seed under Git Bash: values with Windows paths are dropped" "$(! grep -q 'C:/' shared/git/config; echo $?)"
+check "seed under Git Bash: https URLs and other settings stay" "$(grep -q 'insteadOf = ex:' shared/git/config && grep -q 'sslBackend = schannel' shared/git/config; echo $?)"
+rm -rf shared/git; STUB_UNAME=Msys run claude # nothing to seed from: still fine
+rm -f "$HOME/.gitconfig"
+rm -rf shared/git; STUB_UNAME=Msys run claude
+check "seed under Git Bash without a host config: empty file, no error" "$([ "$code" = 0 ] && [ -f shared/git/config ] && [ ! -s shared/git/config ]; echo $?)"
+
+# The host's helper, a script that answers like Git Credential Manager would. FAKE_NO_LOGIN: no answer.
+cat > "$work/helper.sh" <<'HELPER'
+#!/bin/sh
+[ "$1" = get ] || exit 0
+cat > /dev/null
+[ -z "${FAKE_NO_LOGIN:-}" ] || exit 0
+echo username=fake-user
+echo "password=${FAKE_PASSWORD:-fake-secret-1}"
+echo password_expiry_utc=1999999999
+echo oauth_refresh_token=fake-refresh
+echo 'capability[]=state'
+HELPER
+# Anything that asks for a login marks itself here.
+cat > "$work/askpass.sh" <<'ASK'
+#!/bin/sh
+echo asked >> "$ASKED_LOG"
+exit 1
+ASK
+chmod +x "$work/helper.sh" "$work/askpass.sh"
+printf '[credential]\n\thelper = !sh %s/helper.sh\n' "$work" > "$work/hostgit"
+export ASKED_LOG=$work/asked GIT_ASKPASS=$work/askpass.sh SSH_ASKPASS=$work/askpass.sh
+rm -rf "$work/gws" "$work/nows" "$work/sshws" "$work/plainws"
+mkdir -p "$work/nows" "$work/plainws"
+for r in gws:https://git.example.com/org/repo.git nows: sshws:git@git.example.com:org/repo.git; do
+    git init -q "$work/${r%%:*}"
+    [ -z "${r#*:}" ] || git -C "$work/${r%%:*}" remote add origin "${r#*:}"
+done
+creds=shared/git/credentials
+secrets() { case $out in *fake-secret*|*fake-user*|*fake-refresh*) return 0 ;; esac; return 1; }
+
+rm -rf shared/git; WORKSPACE_DIR=$work/gws run claude
+check "credentials: off by default, nothing is copied" "$([ ! -e $creds ]; echo $?)"
+rm -rf shared/git; AGENTS_GIT_CREDENTIALS=host WORKSPACE_DIR=$work/gws run claude
+check "credentials: host, the login is stored for the origin" "$([ "$(cat $creds)" = 'https://fake-user:fake-secret-1@git.example.com' ]; echo $?)"
+check "credentials: nothing is printed" "$(! secrets; echo $?)"
+check "credentials: the harness still launches" "$([ "$code" = 0 ] && grep -q "run --rm -T claude" "$STUB_LOG"; echo $?)"
+FAKE_PASSWORD=fake-secret-2 AGENTS_GIT_CREDENTIALS=host WORKSPACE_DIR=$work/gws run claude
+check "credentials: the next launch replaces the entry" "$([ "$(cat $creds)" = 'https://fake-user:fake-secret-2@git.example.com' ]; echo $?)"
+printf 'https://other:fake-other@other.example.com\n' >> $creds
+FAKE_PASSWORD=fake-secret-3 AGENTS_GIT_CREDENTIALS=host WORKSPACE_DIR=$work/gws run claude
+check "credentials: other hosts' entries are kept" "$(grep -q 'fake-other@other.example.com' $creds && grep -q 'fake-secret-3@git.example.com' $creds && [ "$(wc -l < $creds)" -eq 2 ]; echo $?)"
+rm -rf shared/git; echo 'AGENTS_GIT_CREDENTIALS=host' >> .env
+WORKSPACE_DIR=$work/gws run claude
+check "credentials: the setting is read from .env" "$([ -s $creds ]; echo $?)"
+rm -rf shared/git; AGENTS_GIT_CREDENTIALS='' WORKSPACE_DIR=$work/gws run claude
+check "credentials: an empty shell value does not beat .env (like compose)" "$([ -s $creds ]; echo $?)"
+grep -v '^AGENTS_GIT_CREDENTIALS=' .env > .env.tmp; mv .env.tmp .env
+for w in nows sshws plainws; do
+    rm -rf shared/git; AGENTS_GIT_CREDENTIALS=host WORKSPACE_DIR=$work/$w run claude
+    check "credentials: $w (no https origin) copies nothing" "$([ "$code" = 0 ] && [ ! -e $creds ]; echo $?)"
+done
+rm -rf shared/git; rm -f "$ASKED_LOG"; FAKE_NO_LOGIN=1 AGENTS_GIT_CREDENTIALS=host WORKSPACE_DIR=$work/gws run claude
+check "credentials: no login on the host writes nothing" "$([ "$code" = 0 ] && [ ! -s $creds ]; echo $?)"
+check "credentials: no login, no prompt and no askpass program" "$([ ! -e "$ASKED_LOG" ] && ! secrets; echo $?)"
+unset ASKED_LOG GIT_ASKPASS SSH_ASKPASS GIT_CONFIG_NOSYSTEM GIT_CONFIG_GLOBAL
+
 mv .env .env.edited
 run --help
 check "fresh checkout: creates .env and refuses, even for --help" "$([ "$code" = 1 ] && [ -z "$calls" ] && [ -f .env ] && case $out in *"Edit .env first"*) true ;; *) false ;; esac; echo $?)"

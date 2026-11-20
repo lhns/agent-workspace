@@ -164,7 +164,11 @@ Things to know:
 
 On first run your host git config is copied to `shared/git/config` (on Windows, values containing Windows paths are dropped) and mounted read-write, so `git config --global` works in the container. Delete the file to re-seed.
 
-Host credential helpers can't run in the container. Instead git uses `credential.helper store`: enter a token once on the first push or pull; it is kept in `shared/git/credentials` (plaintext, gitignored) and reused by every harness.
+Host-only settings are dropped from that copy at every start: `http.sslBackend` and the other schannel keys, and the credential helpers `manager`, `manager-core`, `wincred` and `osxkeychain` with their selector state. Other helpers (`store`, `cache`) stay.
+
+Host credential helpers can't run in the container. Instead git uses `credential.helper store`, kept in `shared/git/credentials` (plaintext, gitignored) and reused by every harness. Agents have no terminal, so log in once yourself: `run-agent --exec git ls-remote <url>` asks for the token and stores it.
+
+Or let the launcher copy the login: set `AGENTS_GIT_CREDENTIALS=host` (in `.env` or the shell). At each launch it asks your own credential helper (Git Credential Manager, keychain, ...), without prompting, for the login of the workspace's `https` `origin`, and stores it in `shared/git/credentials`. Nothing happens without a login, for an ssh remote or outside a git repo. Git Credential Manager often holds short-lived OAuth tokens (GitLab about 2 hours): the copy is refreshed at each launch, but a session that outlives the token fails midway. Restart it, or log in by hand with a personal access token (ADR 28).
 
 ## Global instructions
 
