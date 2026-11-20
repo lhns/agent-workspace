@@ -211,7 +211,8 @@ exec "$REAL_UNAME" "$@"
 STUB
 chmod +x stub/uname
 export HOME=$work/home GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=$work/hostgit
-unset XDG_CONFIG_HOME STUB_UNAME AGENTS_GIT_CREDENTIALS
+unset XDG_CONFIG_HOME AGENTS_GIT_CREDENTIALS
+export STUB_UNAME=Linux # also when this test runs under Git Bash
 mkdir -p "$HOME"
 printf '[core]\n\teditor = "C:/Program Files/Editor/ed.exe"\n[url "https://git.example.com/"]\n\tinsteadOf = ex:\n[http]\n\tsslBackend = schannel\n' > "$HOME/.gitconfig"
 rm -rf shared/git; run claude
@@ -219,31 +220,23 @@ check "seed on a Linux host: copied as is" "$([ "$(cat shared/git/config)" = "$(
 rm -rf shared/git; STUB_UNAME=Msys run claude
 check "seed under Git Bash: values with Windows paths are dropped" "$(! grep -q 'C:/' shared/git/config; echo $?)"
 check "seed under Git Bash: https URLs and other settings stay" "$(grep -q 'insteadOf = ex:' shared/git/config && grep -q 'sslBackend = schannel' shared/git/config; echo $?)"
-rm -rf shared/git; STUB_UNAME=Msys run claude # nothing to seed from: still fine
 rm -f "$HOME/.gitconfig"
 rm -rf shared/git; STUB_UNAME=Msys run claude
 check "seed under Git Bash without a host config: empty file, no error" "$([ "$code" = 0 ] && [ -f shared/git/config ] && [ ! -s shared/git/config ]; echo $?)"
 
-# The host's helper, a script that answers like Git Credential Manager would. FAKE_NO_LOGIN: no answer.
-cat > "$work/helper.sh" <<'HELPER'
-#!/bin/sh
-[ "$1" = get ] || exit 0
-cat > /dev/null
-[ -z "${FAKE_NO_LOGIN:-}" ] || exit 0
-echo username=fake-user
-echo "password=${FAKE_PASSWORD:-fake-secret-1}"
-echo password_expiry_utc=1999999999
-echo oauth_refresh_token=fake-refresh
-echo 'capability[]=state'
-HELPER
+# The host's helper, a shell function that answers like Git Credential Manager would (extra attributes
+# included). FAKE_NO_LOGIN: no answer.
+cat > "$work/hostgit" <<'HOSTGIT'
+[credential]
+	helper = "!f() { test \"$1\" = get || return 0; cat >/dev/null; test -z \"$FAKE_NO_LOGIN\" || return 0; echo username=fake-user; echo password=${FAKE_PASSWORD:-fake-secret-1}; echo password_expiry_utc=1999999999; echo oauth_refresh_token=fake-refresh; echo capability[]=state; }; f"
+HOSTGIT
 # Anything that asks for a login marks itself here.
 cat > "$work/askpass.sh" <<'ASK'
 #!/bin/sh
 echo asked >> "$ASKED_LOG"
 exit 1
 ASK
-chmod +x "$work/helper.sh" "$work/askpass.sh"
-printf '[credential]\n\thelper = !sh %s/helper.sh\n' "$work" > "$work/hostgit"
+chmod +x "$work/askpass.sh"
 export ASKED_LOG=$work/asked GIT_ASKPASS=$work/askpass.sh SSH_ASKPASS=$work/askpass.sh
 rm -rf "$work/gws" "$work/nows" "$work/sshws" "$work/plainws"
 mkdir -p "$work/nows" "$work/plainws"

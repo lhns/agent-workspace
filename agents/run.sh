@@ -151,7 +151,8 @@ fi
 # AGENTS_GIT_CREDENTIALS=host: copy the login for the workspace's https origin from the host's own credential
 # helper into shared/git/credentials (ADR 28). Never prompts, prints nothing, writes nothing without a login.
 if [ "${AGENTS_GIT_CREDENTIALS:-$(envval AGENTS_GIT_CREDENTIALS)}" = host ] && command -v git >/dev/null; then
-    origin=$(git -C "${ws:-workspace}" remote get-url origin 2>/dev/null) || origin=
+    # Git Bash: the path is converted for this host program (the MSYS2_ARG_CONV_EXCL above is for docker's arguments).
+    origin=$(MSYS2_ARG_CONV_EXCL='' git -C "${ws:-workspace}" remote get-url origin 2>/dev/null) || origin=
     case $origin in
         https://*)
             printf 'url=%s\n\n' "$origin" |
