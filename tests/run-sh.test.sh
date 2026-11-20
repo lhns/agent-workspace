@@ -301,7 +301,7 @@ check "the tag reaches the run calls only, never compose build" "$([ "$(paste -s
 check "the adapting line is printed" "$(case $out in *"Adapting base image to uid 1001..."*) true ;; *) false ;; esac; echo $?)"
 check "no cache volume: nothing is chowned" "$(! grep -q 'chown' "$STUB_LOG"; echo $?)"
 STUB_UID=1001 STUB_GID=1002 STUB_VOLUME=1 run claude
-check "a rebuilt base also chowns the existing cache volume once" "$([ "$(grep -c "run --rm -u 0 -v agent-workspace_cache:/c $b chown -R 1001:1002 /c" "$STUB_LOG")" = 1 ]; echo $?)"
+check "a rebuilt base also chowns the existing cache volume once" "$([ "$(grep -cF "run --rm -u 0 -v agent-workspace_cache:/c $b sh -c [ \"\$(stat -c %u:%g /c)\" = \"\$1\" ] || chown -R \"\$1\" /c sh 1001:1002" "$STUB_LOG")" = 1 ]; echo $?)"
 STUB_UID=1001 STUB_GID=1002 STUB_VOLUME=1 STUB_LABEL=sha256:src run claude
 check "a matching label skips the derived build and the volume chown" "$(! grep -q '^build \|chown' "$STUB_LOG" && [ "$(grep -c 'run :uid-1001-1002' "$STUB_LOG.tag")" = 2 ]; echo $?)"
 STUB_UID=1001 STUB_GID=1002 STUB_LABEL=sha256:other run claude

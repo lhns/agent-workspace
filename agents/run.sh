@@ -149,7 +149,7 @@ ensure_image() {
 
 # Thin local image on top of agent-workspace-<name> whose agent user has the host's uid:gid; the plain
 # image stays 1000 for everyone else. Rebuilt only when the source image changed (it is labelled with
-# its id). A rebuilt base also gives the existing cache volume the new owner. No-op without a remap.
+# its id). A rebuilt base also gives the existing cache volume the new owner (skipped when it already has it). No-op without a remap.
 # Usage: remap_image <base|harness>
 remap_image() {
     [ -n "$uidtag" ] || return 0
@@ -173,7 +173,7 @@ DOCKERFILE
     ) || return 1
     # The cache volume keeps the owner of whatever filled it first.
     if [ "$1" = base ] && docker volume inspect agent-workspace_cache >/dev/null 2>&1; then
-        docker run --rm -u 0 -v agent-workspace_cache:/c "$src$uidtag" chown -R "$uid:$gid" /c
+        docker run --rm -u 0 -v agent-workspace_cache:/c "$src$uidtag" sh -c '[ "$(stat -c %u:%g /c)" = "$1" ] || chown -R "$1" /c' sh "$uid:$gid"
     fi
 }
 
