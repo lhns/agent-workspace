@@ -82,7 +82,7 @@ The command holds the path of this repo: after moving it, run the install script
 ## Layout
 
 ```
-agents/base/                   shared image: OS, tools, user (uid 1000 "agent"); Dockerfile.windows + install.ps1 for Windows containers
+agents/base/                   shared image: OS, tools, user ("agent", uid 1000, or the host's on Linux); Dockerfile.windows + install.ps1 for Windows containers
 agents/<harness>/              Dockerfile (only the harness install, FROM base), Dockerfile.windows (same for Windows containers, if the harness has one), harness.sh + its local state
 agents/<harness>/harness.sh    what the scripts need to know about the harness: state dirs, session lookup, session picker
 agents/launch.sh               options, harness menu and shared/.last-harness; runs in the base image on every launch
@@ -120,6 +120,7 @@ A folder `agents/<name>/` with a `Dockerfile` (`FROM` the base image; a `Dockerf
 - `WORKSPACE_DIR` in `.env`: the folder the agent works in; empty means `./workspace`. A shell variable overrides it per run: `WORKSPACE_DIR=~/code/foo ./run-agent.sh claude`, and `--workdir` overrides both (see [Use in any folder](#use-in-any-folder)). The folder must exist.
 - Proxy: set `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (either case; each sets both spellings) in the shell before starting a launcher, or in `.env`. They are used for image builds and passed to the agent. A proxy on the host itself is `host.docker.internal`, not `localhost`. Pulls of the prebuilt images are done by Docker itself and use Docker's proxy settings; if a pull fails, the local build uses these variables.
 - `AGENTS_LOCAL_BUILD`: non-empty (e.g. `1`) always builds the image locally instead of pulling it.
+- `AGENTS_UID`: `<uid>[:<gid>]` of the container user, so files agents write belong to you. Empty (the default) means your own uid on a Linux host; Git Bash, macOS and Windows containers keep 1000, as does `AGENTS_UID=1000`. For another uid the launcher builds a thin local image per agent image (`agent-workspace-<name>:uid-<uid>-<gid>`, once per image update, so a first launch takes longer and uses extra disk). Not applied with uid 0 or rootless Docker (a warning says so); use `AGENTS_UID=1000` to turn it off (ADR 29).
 - `AGENTS_IMAGE_PREFIX`: where prebuilt images are pulled from, default `ghcr.io/lhns/agent-workspace`; set it for a fork or mirror.
 - `AGENTS_PLATFORM`: `linux` or `windows` to force the kind of containers; empty (the default) asks the Docker daemon. See [Windows containers](#windows-containers).
 - `AGENTS_ISOLATION`: `process` or `hyperv` for Windows containers, passed to Docker as `isolation`; empty is the daemon's default. Set `hyperv` when the host is newer than build 26100. Ignored for Linux containers.

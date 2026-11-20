@@ -62,6 +62,38 @@ local_build=${AGENTS_LOCAL_BUILD:-$(envval AGENTS_LOCAL_BUILD)}
 prefix=${AGENTS_IMAGE_PREFIX:-$(envval AGENTS_IMAGE_PREFIX)}
 prefix=${prefix:-ghcr.io/lhns/agent-workspace}
 
+# Linux containers on a Linux host: the container user takes the host's uid so the bind mounts stay writable (ADR 29).
+# AGENTS_UID=<uid>[:<gid>] forces it (1000 = no remap); empty means the host user's, on Linux only.
+# A derived image per uid is built on the image below (remap_image); uidtag is its tag, empty = the plain image.
+uid=; gid=; uidtag=
+export AGENTS_IMAGE_TAG= # set only on the run calls, so `compose build` keeps building the plain images
+if [ "$platform" = linux ]; then
+    want=${AGENTS_UID:-$(envval AGENTS_UID)}
+    if [ -n "$want" ]; then
+        uid=${want%%:*}
+        case $want in *:*) gid=${want#*:} ;; *) gid= ;; esac
+        if [ -z "$gid" ]; then
+            if [ "$(uname -s)" = Linux ]; then gid=$(id -g); else gid=$uid; fi
+        fi
+    elif [ "$(uname -s)" = Linux ]; then
+        uid=$(id -u); gid=$(id -g)
+    fi
+    case $uid$gid in
+        *[!0-9]*) echo "AGENTS_UID must be <uid>[:<gid>] with numbers, not '$want'" >&2; exit 1 ;;
+    esac
+    if [ -z "$uid" ] || [ "$uid" = 1000 ]; then
+        uid=
+    elif [ "$uid" = 0 ]; then
+        echo "Warning: the host user is root, so the agents keep uid 1000 and may not write your files (AGENTS_UID=<uid> sets another)." >&2
+        uid=
+    elif docker info -f '{{json .SecurityOptions}}' 2>/dev/null | grep -q 'name=rootless'; then
+        echo "Warning: rootless Docker maps uids itself, so the agents keep uid 1000 (AGENTS_UID=1000 hides this)." >&2
+        uid=
+    else
+        uidtag=:uid-$uid-$gid
+    fi
+fi
+
 # Without a terminal (CI, pipes) compose can't allocate a tty and fails; -T skips it.
 tty=; [ -t 0 ] || tty=-T
 
@@ -115,13 +147,43 @@ ensure_image() {
     echo "$new" > "$hashfile"
 }
 
+# Thin local image on top of agent-workspace-<name> whose agent user has the host's uid:gid; the plain
+# image stays 1000 for everyone else. Rebuilt only when the source image changed (it is labelled with
+# its id). A rebuilt base also gives the existing cache volume the new owner (skipped when it already has it). No-op without a remap.
+# Usage: remap_image <base|harness>
+remap_image() {
+    [ -n "$uidtag" ] || return 0
+    local src=agent-workspace-$1 label=agent-workspace.uid-source id cur
+    id=$(docker image inspect -f '{{.Id}}' "$src") || return 1
+    cur=$(docker image inspect -f "{{index .Config.Labels \"$label\"}}" "$src$uidtag" 2>/dev/null) || cur=
+    [ "$cur" != "$id" ] || return 0
+    echo "Adapting $1 image to uid $uid..."
+    (
+        export HTTP_PROXY=${HTTP_PROXY:-${http_proxy:-}} HTTPS_PROXY=${HTTPS_PROXY:-${https_proxy:-}} NO_PROXY=${NO_PROXY:-${no_proxy:-}}
+        export http_proxy=${http_proxy:-$HTTP_PROXY} https_proxy=${https_proxy:-$HTTPS_PROXY} no_proxy=${no_proxy:-$NO_PROXY}
+        docker build -t "$src$uidtag" --label "$label=$id" \
+            --build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg NO_PROXY \
+            --build-arg http_proxy --build-arg https_proxy --build-arg no_proxy - <<DOCKERFILE
+FROM $src
+USER root
+RUN groupmod -o -g $gid agent && usermod -o -u $uid -g $gid agent \
+ && find / -xdev \( -uid 1000 -o -gid 1000 \) -exec chown -h $uid:$gid {} +
+USER agent
+DOCKERFILE
+    ) || return 1
+    # The cache volume keeps the owner of whatever filled it first.
+    if [ "$1" = base ] && docker volume inspect agent-workspace_cache >/dev/null 2>&1; then
+        docker run --rm -u 0 -v agent-workspace_cache:/c "$src$uidtag" sh -c '[ "$(stat -c %u:%g /c)" = "$1" ] || chown -R "$1" /c' sh "$uid:$gid"
+    fi
+}
+
 # State dirs, so docker doesn't create them as root. The launch dir is made here (not in the
 # container) so this script can delete it afterwards.
 AGENTS_RUN_ID=$RANDOM$RANDOM$$
 export AGENTS_RUN_ID
 launch=shared/.launch/$AGENTS_RUN_ID
 mkdir -p shared/git shared/remote-docker shared/instructions "$launch"
-# The container user (uid 1000) writes here, whoever the host user is.
+# The container user (uid 1000, or the host's, see above) writes here, whoever the host user is.
 chmod 777 "$launch"
 # Leftovers of a killed launcher.
 find shared/.launch -mindepth 1 -maxdepth 1 -mmin +1440 -exec rm -rf {} + 2>/dev/null || true
@@ -165,11 +227,12 @@ fi
 # The core (options, harness menu, last-harness) runs in the base image, with every argument
 # untouched.
 ensure_image base
+remap_image base
 # Without a terminal the core must not swallow stdin meant for the harness (echo hi | run-agent claude -p).
 if [ -n "$tty" ]; then
-    docker compose run --rm -T base "$@" </dev/null || exit $?
+    AGENTS_IMAGE_TAG=$uidtag docker compose run --rm -T base "$@" </dev/null || exit $?
 else
-    docker compose run --rm base "$@" || exit $?
+    AGENTS_IMAGE_TAG=$uidtag docker compose run --rm base "$@" || exit $?
 fi
 result=$(cat "$launch/result" 2>/dev/null || true)
 case $result in
@@ -184,10 +247,11 @@ AGENTS_WORKSPACE_TARGET=$(cat "$launch/target")
 dirs=$(sed -n 's/^dirs="\(.*\)"$/\1/p' "agents/$h/harness.sh")
 for d in $dirs; do mkdir -p "agents/$h/$d"; done
 ensure_image "$h"
+remap_image "$h"
 
 # Recorded only now, so a failed pull or build isn't (mv is atomic; the core only computed the content).
 mv -f "$launch/last-harness" shared/.last-harness
 # Not exec'd: the launch dir is removed afterwards. The harness reads its arguments from it.
 rc=0
-docker compose run --rm ${tty:+"$tty"} "$h" || rc=$?
+AGENTS_IMAGE_TAG=$uidtag docker compose run --rm ${tty:+"$tty"} "$h" || rc=$?
 exit "$rc"
