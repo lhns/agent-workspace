@@ -114,7 +114,7 @@ services:
       dockerfile: ${AGENTS_DOCKERFILE:-Dockerfile}
       isolation: ${AGENTS_ISOLATION:-default}
       args: *proxy
-    image: agent-workspace-base${AGENTS_IMAGE_SUFFIX:-}
+    image: agent-workspace-base${AGENTS_IMAGE_SUFFIX:-}${AGENTS_IMAGE_TAG:-}
     isolation: ${AGENTS_ISOLATION:-default}
     stdin_open: true
     tty: true
@@ -143,7 +143,7 @@ services:
       dockerfile: ${AGENTS_DOCKERFILE:-Dockerfile}
       isolation: ${AGENTS_ISOLATION:-default}
       args: *proxy
-    image: agent-workspace-claude${AGENTS_IMAGE_SUFFIX:-}
+    image: agent-workspace-claude${AGENTS_IMAGE_SUFFIX:-}${AGENTS_IMAGE_TAG:-}
     volumes:
       - *workspace
       - *git
@@ -164,7 +164,7 @@ services:
       dockerfile: ${AGENTS_DOCKERFILE:-Dockerfile}
       isolation: ${AGENTS_ISOLATION:-default}
       args: *proxy
-    image: agent-workspace-opencode${AGENTS_IMAGE_SUFFIX:-}
+    image: agent-workspace-opencode${AGENTS_IMAGE_SUFFIX:-}${AGENTS_IMAGE_TAG:-}
     volumes:
       - *workspace
       - *git
@@ -188,7 +188,7 @@ services:
       dockerfile: ${AGENTS_DOCKERFILE:-Dockerfile}
       isolation: ${AGENTS_ISOLATION:-default}
       args: *proxy
-    image: agent-workspace-pi${AGENTS_IMAGE_SUFFIX:-}
+    image: agent-workspace-pi${AGENTS_IMAGE_SUFFIX:-}${AGENTS_IMAGE_TAG:-}
     volumes:
       - *workspace
       - *git
@@ -209,7 +209,7 @@ services:
       dockerfile: ${AGENTS_DOCKERFILE:-Dockerfile}
       isolation: ${AGENTS_ISOLATION:-default}
       args: *proxy
-    image: agent-workspace-cline${AGENTS_IMAGE_SUFFIX:-}
+    image: agent-workspace-cline${AGENTS_IMAGE_SUFFIX:-}${AGENTS_IMAGE_TAG:-}
     volumes:
       - *workspace
       - *git
@@ -232,7 +232,7 @@ services:
       dockerfile: ${AGENTS_DOCKERFILE:-Dockerfile}
       isolation: ${AGENTS_ISOLATION:-default}
       args: *proxy
-    image: agent-workspace-hermes${AGENTS_IMAGE_SUFFIX:-}
+    image: agent-workspace-hermes${AGENTS_IMAGE_SUFFIX:-}${AGENTS_IMAGE_TAG:-}
     # On Linux hermes refuses a bind-mounted home, so this copies its state from and back to the
     # config folder around each run. Mounted, not built in: script edits need no rebuild.
     entrypoint: [bash, "${AGENTS_DIR:-/opt/agent-workspace}/agents/hermes/entrypoint.sh"]

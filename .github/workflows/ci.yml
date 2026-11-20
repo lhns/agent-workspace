@@ -116,12 +116,11 @@ jobs:
           docker rmi "$ref"
           echo "$hash" > agents/base/.build.sha256
 
-      # Runner uid is 1001, the container's is 1000: umask 000 makes the launcher's state dirs writable.
+      # The runner is uid 1001: the launcher adapts the image to it (ADR 29), so no umask workaround is needed.
       - name: First launch builds the image and the agent starts
         env:
           AGENTS_LOCAL_BUILD: "1"
         run: |
-          umask 000
           set -o pipefail
           ./run-agent.sh --harness ${{ matrix.harness }} --exec bash -c "$(cat tests/smoke.sh)" smoke ${{ matrix.harness }} "$PWD/workspace" 2>&1 | tee first.log
           grep -q "^Building ${{ matrix.harness }} image" first.log
@@ -142,7 +141,7 @@ jobs:
       - name: Start script resumes and asks as designed
         if: matrix.harness == 'claude'
         run: |
-          umask 000
+          umask 000 # plain compose run: the untagged image is uid 1000, not the runner's
           docker compose run --rm -T claude bash -c "$(cat tests/start.test.sh)" start-test
 
       # launch.sh runs from the base image (the compose base service), already built by the launch above;
@@ -150,20 +149,24 @@ jobs:
       - name: Launch core parses, records and chooses as designed
         if: matrix.harness == 'claude'
         run: |
-          umask 000
+          umask 000 # plain compose run: the untagged image is uid 1000, not the runner's
           docker compose run --rm -T --entrypoint bash base -c "$(cat tests/launch.test.sh)" launch-test
 
       # AGENTS_LOCAL_BUILD stays set so a missing pull can't hide a rebuild: the `^Building` check is meaningful.
-      # umask 000: the container (uid 1000) writes into the launch dir the runner (uid 1001) creates.
       - name: Second launch does not rebuild
         env:
           AGENTS_LOCAL_BUILD: "1"
         run: |
-          umask 000
           set -o pipefail
           ./run-agent.sh --harness ${{ matrix.harness }} --exec bash -c 'echo launched' 2>&1 | tee second.log
           grep -q '^launched$' second.log
           if grep -q '^Building' second.log; then echo "unexpected rebuild"; exit 1; fi
+
+      # The agent writes into the workspace as the runner's own uid, not as 1000.
+      - name: Agent files belong to the runner
+        run: |
+          ./run-agent.sh --harness ${{ matrix.harness }} --exec bash -c "touch '$PWD/workspace/owned'"
+          test "$(stat -c %u workspace/owned)" = "$(id -u)"
 
       # Without a terminal, stdin belongs to the harness, not to the launcher core's container.
       - name: Piped stdin reaches the harness
@@ -171,7 +174,6 @@ jobs:
         env:
           AGENTS_LOCAL_BUILD: "1"
         run: |
-          umask 000
           echo hello | ./run-agent.sh --harness claude --exec cat 2>&1 | tee stdin.log
           grep -q '^hello$' stdin.log
 
@@ -196,7 +198,6 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: |
           docker logout ghcr.io
-          umask 000
           set -o pipefail
           docker rmi agent-workspace-${{ matrix.harness }}
           rm agents/${{ matrix.harness }}/.build.sha256
@@ -232,7 +233,6 @@ jobs:
       - name: Menu launch pulls the published base image
         if: github.ref == 'refs/heads/main' && matrix.harness == 'claude'
         run: |
-          umask 000
           set -o pipefail
           docker rmi agent-workspace-base
           rm -f agents/base/.build.sha256

@@ -3,7 +3,10 @@
 # for the base service, plays the core (agents/launch.sh): it writes the hand-off files from
 # STUB_HARNESS (default claude), STUB_TARGET, or exits with STUB_CORE_CODE / writes nothing for
 # STUB_NO_HARNESS=1 (result "done"), or writes no result for STUB_NO_RESULT=1. The core's own logic is tested by tests/launch.test.sh.
-# `docker info` answers STUB_OSTYPE (default linux) and is not logged; a stub `cygpath` answers
+# `docker info` answers STUB_OSTYPE (default linux), or STUB_SECOPTS for the SecurityOptions query, and is not logged;
+# stub `uname -s` / `id` answer STUB_UNAME_S, STUB_UID and STUB_GID (default Linux 1000:1000, so the host user doesn't matter);
+# `image inspect` gives STUB_IMAGE_ID for the source image and STUB_LABEL (else fails: no derived image) for the label;
+# STUB_VOLUME=1 makes the cache volume exist; a stub `cygpath` answers
 # STUB_WINPATH (or fails), so Windows containers can be played on any OS.
 # Runs on a temp copy of the repo with a scratch .env, so it leaves no state behind.
 #   bash tests/run-sh.test.sh
@@ -18,8 +21,17 @@ cd "$work" || exit 1
 mkdir -p stub
 cat > stub/docker <<'STUB'
 #!/bin/sh
-if [ "${1:-}" = info ]; then echo "${STUB_OSTYPE:-linux}"; exit 0; fi
+if [ "${1:-}" = info ]; then
+    case "$*" in *SecurityOptions*) echo "${STUB_SECOPTS:-[\"name=seccomp,profile=default\"]}" ;; *) echo "${STUB_OSTYPE:-linux}" ;; esac
+    exit 0
+fi
 echo "$*" >> "$STUB_LOG"
+case "$*" in
+    "image inspect -f {{.Id}} "*) echo "${STUB_IMAGE_ID:-sha256:src}" ;;
+    "image inspect -f "*Labels*) [ -n "${STUB_LABEL:-}" ] || exit 1; echo "$STUB_LABEL" ;;
+    "volume inspect "*) [ -n "${STUB_VOLUME:-}" ] || exit 1 ;;
+esac
+if [ "${1:-}" = compose ]; then echo "$2 ${AGENTS_IMAGE_TAG-unset}" >> "$STUB_LOG.tag"; fi
 if [ "${1:-}" = compose ] && [ "${2:-}" = run ]; then
     echo "$AGENTS_PLATFORM|$AGENTS_IMAGE_SUFFIX|$AGENTS_DOCKERFILE|$AGENTS_DIR|$AGENTS_HOME" >> "$STUB_LOG.env"
     echo "$AGENTS_WORKSPACE_TARGET" >> "$STUB_LOG.target"
@@ -53,9 +65,20 @@ cat > stub/cygpath <<'STUB'
 [ -n "${STUB_WINPATH:-}" ] || exit 1
 echo "$STUB_WINPATH"
 STUB
-chmod +x stub/docker stub/cygpath
+cat > stub/uname <<'STUB'
+#!/bin/sh
+if [ "${1:-}" = -s ]; then echo "${STUB_UNAME_S:-Linux}"; exit 0; fi
+if [ "${1:-}" = -o ] && [ -n "${STUB_UNAME:-}" ]; then echo "$STUB_UNAME"; exit 0; fi
+exec "$REAL_UNAME" "$@"
+STUB
+cat > stub/id <<'STUB'
+#!/bin/sh
+case "${1:-}" in -u) echo "${STUB_UID:-1000}" ;; -g) echo "${STUB_GID:-1000}" ;; *) exec "$REAL_ID" "$@" ;; esac
+STUB
+REAL_UNAME=$(command -v uname); REAL_ID=$(command -v id); export REAL_UNAME REAL_ID
+chmod +x stub/docker stub/cygpath stub/uname stub/id
 export PATH=$work/stub:$PATH STUB_LOG=$work/docker.log AGENTS_LOCAL_BUILD=1
-unset AGENTS_HARNESS AGENTS_NONINTERACTIVE AGENTS_AUTORESUME WORKSPACE_DIR STUB_HARNESS STUB_TARGET STUB_CORE_CODE STUB_NO_HARNESS STUB_NO_RESULT STUB_BUILD_FAIL STUB_SLEEP STUB_OSTYPE STUB_WINPATH AGENTS_PLATFORM
+unset AGENTS_HARNESS AGENTS_NONINTERACTIVE AGENTS_AUTORESUME WORKSPACE_DIR STUB_HARNESS STUB_TARGET STUB_CORE_CODE STUB_NO_HARNESS STUB_NO_RESULT STUB_BUILD_FAIL STUB_SLEEP STUB_OSTYPE STUB_WINPATH AGENTS_PLATFORM AGENTS_UID AGENTS_IMAGE_TAG STUB_UNAME_S STUB_UID STUB_GID STUB_SECOPTS STUB_LABEL STUB_VOLUME STUB_IMAGE_ID
 
 fail=0
 # run <args...>: sets `out` (stdout+stderr), `code` and `calls` (the docker calls, "|"-separated).
@@ -203,13 +226,6 @@ rm -f agents/*/.build*.sha256
 
 # Git (ADR 28): seeding on a Windows host (Git Bash) and the opt-in copy of the host's login. Fake values
 # only; the "host's credential helper" is a script of ours, nothing contacts a host.
-REAL_UNAME=$(command -v uname); export REAL_UNAME
-cat > stub/uname <<'STUB'
-#!/bin/sh
-if [ "${1:-}" = -o ] && [ -n "${STUB_UNAME:-}" ]; then echo "$STUB_UNAME"; exit 0; fi
-exec "$REAL_UNAME" "$@"
-STUB
-chmod +x stub/uname
 export HOME=$work/home GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=$work/hostgit
 unset XDG_CONFIG_HOME AGENTS_GIT_CREDENTIALS
 export STUB_UNAME=Linux # also when this test runs under Git Bash
@@ -272,6 +288,53 @@ rm -rf shared/git; rm -f "$ASKED_LOG"; FAKE_NO_LOGIN=1 AGENTS_GIT_CREDENTIALS=ho
 check "credentials: no login on the host writes nothing" "$([ "$code" = 0 ] && [ ! -s $creds ]; echo $?)"
 check "credentials: no login, no prompt and no askpass program" "$([ ! -e "$ASKED_LOG" ] && ! secrets; echo $?)"
 unset ASKED_LOG GIT_ASKPASS SSH_ASKPASS GIT_CONFIG_NOSYSTEM GIT_CONFIG_GLOBAL
+
+# The container user takes the host uid (ADR 29): a derived image agent-workspace-<name>:uid-<uid>-<gid>, used by the run calls only.
+rm -f agents/*/.build*.sha256
+bargs='--build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg NO_PROXY --build-arg http_proxy --build-arg https_proxy --build-arg no_proxy'
+lbl='image inspect -f {{index .Config.Labels "agent-workspace.uid-source"}}'
+remapped() { grep -q '^build ' "$STUB_LOG" || grep -q ':uid' "$STUB_LOG.tag"; }
+b=agent-workspace-base:uid-1001-1002; c=agent-workspace-claude:uid-1001-1002
+STUB_UID=1001 STUB_GID=1002 run claude
+check "linux host, uid 1001: base and harness are adapted before their runs" "$(is "compose build base|image inspect -f {{.Id}} agent-workspace-base|$lbl $b|build -t $b --label agent-workspace.uid-source=sha256:src $bargs -|volume inspect agent-workspace_cache|compose run --rm -T base claude|image inspect agent-workspace-base|compose build claude|image inspect -f {{.Id}} agent-workspace-claude|$lbl $c|build -t $c --label agent-workspace.uid-source=sha256:src $bargs -|compose run --rm -T claude"; echo $?)"
+check "the tag reaches the run calls only, never compose build" "$([ "$(paste -sd'|' "$STUB_LOG.tag")" = 'build |run :uid-1001-1002|build |run :uid-1001-1002' ]; echo $?)"
+check "the adapting line is printed" "$(case $out in *"Adapting base image to uid 1001..."*) true ;; *) false ;; esac; echo $?)"
+check "no cache volume: nothing is chowned" "$(! grep -q 'chown' "$STUB_LOG"; echo $?)"
+STUB_UID=1001 STUB_GID=1002 STUB_VOLUME=1 run claude
+check "a rebuilt base also chowns the existing cache volume once" "$([ "$(grep -c "run --rm -u 0 -v agent-workspace_cache:/c $b chown -R 1001:1002 /c" "$STUB_LOG")" = 1 ]; echo $?)"
+STUB_UID=1001 STUB_GID=1002 STUB_VOLUME=1 STUB_LABEL=sha256:src run claude
+check "a matching label skips the derived build and the volume chown" "$(! grep -q '^build \|chown' "$STUB_LOG" && [ "$(grep -c 'run :uid-1001-1002' "$STUB_LOG.tag")" = 2 ]; echo $?)"
+STUB_UID=1001 STUB_GID=1002 STUB_LABEL=sha256:other run claude
+check "a label of another source image rebuilds" "$(grep -q "^build -t $b" "$STUB_LOG"; echo $?)"
+STUB_UID=1000 STUB_GID=1000 run claude
+check "linux host, uid 1000: no remap, no extra docker calls" "$(is 'image inspect agent-workspace-base|compose run --rm -T base claude|image inspect agent-workspace-claude|compose run --rm -T claude' && ! grep -q ':uid' "$STUB_LOG.tag"; echo $?)"
+STUB_UID=1000 AGENTS_UID=2000:2001 run claude
+check "AGENTS_UID forces uid and gid" "$(grep -q 'build -t agent-workspace-base:uid-2000-2001' "$STUB_LOG"; echo $?)"
+STUB_UID=1000 STUB_GID=1005 AGENTS_UID=2000 run claude
+check "AGENTS_UID without a gid takes the host's gid on Linux" "$(grep -q 'build -t agent-workspace-base:uid-2000-1005' "$STUB_LOG"; echo $?)"
+STUB_UID=1001 AGENTS_UID=1000 run claude
+check "AGENTS_UID=1000 turns the remap off" "$(! remapped; echo $?)"
+echo 'AGENTS_UID=3000:3000' >> .env
+STUB_UID=1001 run claude
+check "AGENTS_UID in .env is used" "$(grep -q 'build -t agent-workspace-base:uid-3000-3000' "$STUB_LOG"; echo $?)"
+STUB_UID=1001 AGENTS_UID=4000:4000 run claude
+check "a shell AGENTS_UID beats .env" "$(grep -q 'build -t agent-workspace-base:uid-4000-4000' "$STUB_LOG"; echo $?)"
+grep -v '^AGENTS_UID=' .env > .env.tmp; mv .env.tmp .env
+AGENTS_UID=abc run claude
+check "a bad AGENTS_UID stops before docker" "$([ "$code" = 1 ] && [ -z "$calls" ]; echo $?)"
+for u in Msys Darwin; do
+    STUB_UNAME_S=$u STUB_UID=1001 run claude
+    check "$u host: no remap without AGENTS_UID" "$(! remapped; echo $?)"
+done
+STUB_UNAME_S=MINGW64_NT-10.0 STUB_UID=1001 AGENTS_UID=2000 run claude
+check "a non-Linux host with AGENTS_UID: the gid defaults to the uid" "$(grep -q 'build -t agent-workspace-base:uid-2000-2000' "$STUB_LOG"; echo $?)"
+STUB_OSTYPE=windows STUB_WINPATH='C:\x' STUB_UID=1001 AGENTS_UID=2000 run claude
+check "windows containers: never remapped" "$(! remapped; echo $?)"
+STUB_UID=1001 STUB_SECOPTS='["name=seccomp,profile=builtin","name=rootless"]' run claude
+check "rootless docker: one warning, no remap" "$(! remapped && [ "$(printf '%s\n' "$out" | grep -c rootless)" = 1 ] && [ "$code" = 0 ]; echo $?)"
+STUB_UID=0 STUB_GID=0 run claude
+check "uid 0: one warning, no remap" "$(! remapped && [ "$(printf '%s\n' "$out" | grep -c 'host user is root')" = 1 ] && [ "$code" = 0 ]; echo $?)"
+rm -f agents/*/.build*.sha256
 
 mv .env .env.edited
 run --help
