@@ -1,6 +1,6 @@
 FROM agent-workspace-base
 # renovate: datasource=npm depName=cline
-ARG CLINE_VERSION=3.0.74
+ARG CLINE_VERSION=3.0.76
 RUN npm install -g cline@${CLINE_VERSION}
 # The image pins the version (Renovate); an in-container update is lost on exit.
 ENV CLINE_NO_AUTO_UPDATE=1
